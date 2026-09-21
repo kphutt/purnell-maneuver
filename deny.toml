@@ -1,0 +1,57 @@
+# cargo-deny config for purnell-maneuver. Run with `cargo deny --locked check` (also
+# wired into the pre-push hook; see .pre-commit-config.yaml). Install with:
+#   cargo install --locked cargo-deny --version 0.20.2
+
+[graph]
+# `targets = []` checks every platform, with no per-platform allowances. The core must
+# also build for wasm32v1-none.
+targets = []
+
+[advisories]
+# Any known vulnerability, including one only fixed by yanking the version, is denied.
+# There is no "warn and ship anyway" tier for a security-hardening gate.
+db-path = "~/.cargo/advisory-db"
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+
+[licenses]
+# Dev-only dependencies (tinyjson, used only by the gate test suite) are not
+# checked by default -- include them, since the allow-list below should cover every
+# license actually in the tree, not just what ships.
+include-dev = true
+# Allow-list derived from the actual dependency tree (see
+# `cargo tree -e normal,build,dev --format "{p} {l}"`): subtle is BSD-3-Clause, tinyjson
+# (test-only) is MIT. Add a license here only alongside the dependency that actually
+# needs it, as a reviewed change.
+allow = ["MIT", "BSD-3-Clause"]
+
+[licenses.private]
+# The workspace members have `publish = false` (Cargo.toml, `[workspace.package]`), so
+# they are not published and their own license doesn't need checking. This does
+# not weaken the check for anything that actually ships: every real dependency above
+# must still be in `allow`.
+ignore = true
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+deny = [
+    { crate = "openssl" },
+    { crate = "openssl-sys" },
+    { crate = "native-tls" },
+]
+
+# No package may run code at build time unless explicitly approved:
+# the core and its tests allow zero build scripts and zero proc-macros today, so
+# `allow-build-scripts` is empty. A binding added later (pyo3, wasm-bindgen) will need
+# one; add it here by name as its own reviewed change, never by widening this to
+# "warn" or removing the check. `executables = "deny"` also rejects a native executable
+# in a crate that runs at build time. Other crates are not scanned for one.
+[bans.build]
+allow-build-scripts = []
+executables = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

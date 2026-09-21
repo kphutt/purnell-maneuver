@@ -1,6 +1,7 @@
 # Local checks for purnell-maneuver. These run on the developer's machine before
-# anything is pushed. Fast checks run on every commit; the slower ones (full test suite,
-# the three wasm builds) run on push instead, so commits stay fast.
+# anything is pushed. Fast checks run on every commit; the slower ones (cargo-deny, the
+# full-history secret scan, the full test suite, the three wasm builds) run on push
+# instead, so commits stay fast.
 #
 # Install once per clone: `pre-commit install --hook-type pre-commit --hook-type pre-push`
 
@@ -18,8 +19,8 @@ repos:
         stages: [pre-commit]
 
       - id: cargo-clippy
-        name: cargo clippy -- -D warnings
-        entry: cargo clippy -- -D warnings
+        name: cargo clippy --locked -- -D warnings
+        entry: cargo clippy --locked -- -D warnings
         language: system
         always_run: true
         pass_filenames: false
@@ -32,33 +33,56 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # Runs first in the pre-push stage: it's the cheapest of the push-time checks
+      # (no compilation), and it's the one most likely to reject a change outright
+      # (a new build-script dependency, a disallowed license, a banned
+      # crate), so it fails fast before paying for a full build.
+      - id: cargo-deny
+        name: cargo deny --locked check
+        entry: cargo deny --locked check
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
+      # Full commit history, not just the staged diff (unlike the pre-commit gitleaks
+      # hook above): catches a secret that was committed and later removed, which a
+      # diff-only scan would never see.
+      - id: gitleaks-full-history
+        name: gitleaks (full history)
+        entry: gitleaks git --no-banner --redact --config .gitleaks.toml --log-opts=--all
+        language: system
+        always_run: true
+        pass_filenames: false
+        stages: [pre-push]
+
       - id: cargo-test
-        name: cargo test (incl. shared testdata/vectors cases)
-        entry: cargo test
+        name: cargo test --locked (incl. shared testdata/vectors cases)
+        entry: cargo test --locked
         language: system
         always_run: true
         pass_filenames: false
         stages: [pre-push]
 
       - id: wasm-build-wasm32v1-none
-        name: cargo build -p seal -p gate --target wasm32v1-none
-        entry: cargo build -p seal -p gate --target wasm32v1-none
+        name: cargo build -p seal -p gate --target wasm32v1-none --locked
+        entry: cargo build -p seal -p gate --target wasm32v1-none --locked
         language: system
         always_run: true
         pass_filenames: false
         stages: [pre-push]
 
       - id: wasm-build-wasm32-unknown-unknown
-        name: cargo build -p seal -p gate --target wasm32-unknown-unknown
-        entry: cargo build -p seal -p gate --target wasm32-unknown-unknown
+        name: cargo build -p seal -p gate --target wasm32-unknown-unknown --locked
+        entry: cargo build -p seal -p gate --target wasm32-unknown-unknown --locked
         language: system
         always_run: true
         pass_filenames: false
         stages: [pre-push]
 
       - id: wasm-build-wasm32-wasip1
-        name: cargo build -p seal -p gate --target wasm32-wasip1
-        entry: cargo build -p seal -p gate --target wasm32-wasip1
+        name: cargo build -p seal -p gate --target wasm32-wasip1 --locked
+        entry: cargo build -p seal -p gate --target wasm32-wasip1 --locked
         language: system
         always_run: true
         pass_filenames: false

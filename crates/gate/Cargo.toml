@@ -16,9 +16,10 @@ subtle = { version = "2", default-features = false }
 [dev-dependencies]
 # Test-only: reads the shared JSON test vectors in testdata/vectors/. See
 # tests/vectors.rs for why a dev-dependency here doesn't affect the no_std build.
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-hex = "0.4"
+# tinyjson (not serde/serde_json) because it has no build script, is not a
+# proc-macro, and pulls in no non-dev dependencies of its own. Hex decoding
+# is a few lines in tests/vectors.rs instead of the `hex` crate, for the same reason.
+tinyjson = "2"
 
 [lints]
 workspace = true

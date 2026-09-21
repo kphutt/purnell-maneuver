@@ -15,3 +15,6 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Per-machine agent config: never repo-tracked, belongs at user level.
+.claude/
