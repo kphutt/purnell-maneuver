@@ -1,0 +1,12 @@
+[package]
+name = "seal"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "purnell-maneuver signing side (no_std). Empty for now: there is no signing yet."
+
+[lib]
+name = "seal"
+
+[lints]
+workspace = true

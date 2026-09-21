@@ -1,0 +1,7 @@
+title = "purnell-maneuver gitleaks config"
+
+# Start from gitleaks' default ruleset; no repo-specific rules or allowlist entries
+# yet. Add narrowly-scoped [[rules]] or [allowlist] entries here if a real false
+# positive shows up, rather than disabling the scan.
+[extend]
+useDefault = true

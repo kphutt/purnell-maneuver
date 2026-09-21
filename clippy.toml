@@ -1,0 +1,8 @@
+# Exempts `#[cfg(test)]` code from the panic lints in `[workspace.lints.clippy]`
+# (`unwrap_used`, `expect_used`, `panic`, `indexing_slicing`) on purpose: those lints
+# exist to keep panics out of the core's non-test code, and tests are expected to
+# panic (via assert!/unwrap/expect) to fail loudly on a broken case.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true

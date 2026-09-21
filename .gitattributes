@@ -1,0 +1,3 @@
+# Normalize line endings to LF for everyone, on every platform, regardless of local
+# git config (autocrlf).
+* text=auto eol=lf

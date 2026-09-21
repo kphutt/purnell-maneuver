@@ -1,0 +1,17 @@
+# Build output
+**/target/
+/mutants.out/
+/mutants.out.old/
+
+# Secrets
+*.pem
+*.key
+*.p12
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini

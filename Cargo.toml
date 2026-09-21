@@ -1,0 +1,23 @@
+[workspace]
+resolver = "2"
+members = ["crates/seal", "crates/gate"]
+
+[workspace.package]
+edition = "2021"
+publish = false
+
+# Shared with every workspace member via `[lints] workspace = true` in each crate's
+# Cargo.toml, so the "no unsafe, no panics" rules live in one place. `cargo clippy`
+# (without `--tests`) does not compile `#[cfg(test)]` code, so these deny levels are
+# enforced outside tests only, as the rules require.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+indexing_slicing = "deny"
+unreachable = "deny"
+todo = "deny"
+unimplemented = "deny"

@@ -1,0 +1,24 @@
+[package]
+name = "gate"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "purnell-maneuver verifying side (no_std): checks seals."
+
+[lib]
+name = "gate"
+
+[dependencies]
+# Pure Rust, no_std-capable constant-time comparison. `default-features = false` drops
+# its "std" feature so it stays no_std here.
+subtle = { version = "2", default-features = false }
+
+[dev-dependencies]
+# Test-only: reads the shared JSON test vectors in testdata/vectors/. See
+# tests/vectors.rs for why a dev-dependency here doesn't affect the no_std build.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"
+
+[lints]
+workspace = true
