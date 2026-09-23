@@ -1,0 +1,15 @@
+[package]
+name = "token"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+description = "purnell-maneuver shared core (no_std): the request canonicalizer, targets, caveat sets and the token format."
+
+[lib]
+name = "token"
+
+# No dependencies at all, on purpose: the canonicalizer and the token format are
+# hand-written so nothing in the security core parses on someone else's terms.
+
+[lints]
+workspace = true

@@ -3,7 +3,7 @@ name = "gate"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "purnell-maneuver verifying side (no_std): checks seals."
+description = "purnell-maneuver server side (no_std): observes requests and checks them against tokens."
 
 [lib]
 name = "gate"
@@ -12,6 +12,8 @@ name = "gate"
 # Pure Rust, no_std-capable constant-time comparison. `default-features = false` drops
 # its "std" feature so it stays no_std here.
 subtle = { version = "2", default-features = false }
+# The shared canonicalizer, caveat set and token format.
+token = { path = "../token", version = "0.1.0" }
 
 [dev-dependencies]
 # Test-only: reads the shared JSON test vectors in testdata/vectors/. See
@@ -20,6 +22,9 @@ subtle = { version = "2", default-features = false }
 # proc-macro, and pulls in no non-dev dependencies of its own. Hex decoding
 # is a few lines in tests/vectors.rs instead of the `hex` crate, for the same reason.
 tinyjson = "2"
+# Test-only: the flow tests seal real tokens from observed requests, the only way a
+# test may get a valid token.
+seal = { path = "../seal", version = "0.1.0" }
 
 [lints]
 workspace = true

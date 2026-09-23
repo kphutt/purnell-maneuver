@@ -1,12 +1,65 @@
-//! `gate` is the verifying side of `purnell-maneuver`: it checks seals.
+//! `gate` is the server side of `purnell-maneuver`: it observes requests and checks them
+//! against tokens.
 //!
-//! This crate does no signing and no verification of tokens yet (see `seal`). It has one
-//! operation so far: comparing two secrets as raw bytes in constant time.
+//! - [`observe`] turns what a server reports about a request ([`RequestFacts`]) into the
+//!   request's [`Target`]. While learning, observed targets go to `seal::learn`.
+//! - [`check`] decides whether a token allows a request. The answer is [`Allowed`] or a
+//!   named [`Denial`], never anything in between.
+//! - [`compare_secrets`] compares two secrets in constant time.
+//!
+//! Both `observe` and `check` use the one canonicalizer in the `token` crate, so a
+//! request observed while learning and the same request checked later always get the
+//! same target. `gate` never reads the token format itself; only the `token` crate's
+//! format module does.
 //!
 //! `no_std`, no `unsafe`, and no panics outside tests.
 #![no_std]
 
+pub use token::{
+    Denial, HttpTarget, RequestFacts, Target, MAX_AUTHORITY_BYTES, MAX_METHOD_BYTES,
+    MAX_PATH_BYTES, MAX_SCHEME_BYTES, MAX_TOKEN_BYTES,
+};
+
 use subtle::ConstantTimeEq;
+use token::{canonicalize, token_lists};
+
+/// Proof that [`check`] allowed a request.
+///
+/// Only `gate` can make one: the field is private, and [`check`] builds it in exactly
+/// one place. Everything else is a [`Denial`] (fail closed).
+#[derive(Debug, PartialEq, Eq)]
+pub struct Allowed {
+    _private: (),
+}
+
+/// Observes a request: returns its target, for learning, or the reason it can't be
+/// learned.
+///
+/// A request the canonicalizer denies can never be allowed later either, so it is
+/// never learned.
+pub fn observe(request: &RequestFacts) -> Result<Target, Denial> {
+    canonicalize(request)
+}
+
+/// Checks whether `token` allows `request`.
+///
+/// - The target comes only from `request`. The token only lists destinations; it has
+///   no flags, modes, wildcards or options that change how this check runs.
+/// - The token is not signed yet, so it proves nothing about who wrote it: a
+///   hand-written token that lists a target in canonical form allows it.
+/// - The target must match a listed caveat exactly, byte for byte, after the
+///   canonicalizer. Targets are not secret, so this is plain equality, not the
+///   constant-time comparison [`compare_secrets`] uses for secrets.
+/// - Every input is checked against its byte limit before it is read.
+/// - An empty caveat set allows nothing.
+pub fn check(token: &[u8], request: &RequestFacts) -> Result<Allowed, Denial> {
+    let target = canonicalize(request)?;
+    if token_lists(token, &target)? {
+        Ok(Allowed { _private: () })
+    } else {
+        Err(Denial::NotListed)
+    }
+}
 
 /// The result of comparing two secrets.
 ///
@@ -79,6 +132,70 @@ pub fn compare_secrets(a: &[u8], b: &[u8]) -> Result<Comparison, GateError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn get(path: &str) -> RequestFacts<'_> {
+        RequestFacts {
+            method: b"GET",
+            scheme: b"https",
+            authority: b"example.com",
+            path: path.as_bytes(),
+        }
+    }
+
+    #[test]
+    fn observe_is_the_canonicalizer() {
+        let target = observe(&get("/a?x=1")).unwrap();
+        assert_eq!(target.as_http().map(HttpTarget::path), Some("/a"));
+        assert_eq!(observe(&get("/a/../b")), Err(Denial::MalformedPath));
+    }
+
+    #[test]
+    fn a_learned_request_is_allowed_and_nothing_else() {
+        // `seal` is not a dependency of `gate`, so seal through `token` directly: the
+        // same learn and encode that `seal::learn` and `seal::seal` call.
+        let observed = [observe(&get("/a")).unwrap()];
+        let token = token::encode(&token::learn(&observed)).unwrap();
+        assert_eq!(
+            check(token.as_bytes(), &get("/a?page=2")),
+            Ok(Allowed { _private: () })
+        );
+        assert_eq!(check(token.as_bytes(), &get("/b")), Err(Denial::NotListed));
+    }
+
+    #[test]
+    fn an_empty_caveat_set_allows_nothing() {
+        assert_eq!(check(b"v1", &get("/")), Err(Denial::NotListed));
+    }
+
+    #[test]
+    fn a_bad_request_is_denied_before_the_token_is_read() {
+        assert_eq!(check(b"", &get("/a/../b")), Err(Denial::MalformedPath));
+    }
+
+    /// KNOWN GAP, pinned on purpose: flip this test when tokens are signed. The token is
+    /// unsigned and its grammar is public, so a token written by hand, never sealed
+    /// from an observation, allows the target it lists. The types keep code from
+    /// forging a caveat set; nothing yet keeps a person from forging a token.
+    #[test]
+    fn known_gap_until_signing_a_hand_written_canonical_token_is_allowed() {
+        let delete_admin = RequestFacts {
+            method: b"DELETE",
+            path: b"/admin",
+            ..get("/")
+        };
+        assert_eq!(
+            check(b"v1;http DELETE https example.com /admin", &delete_admin),
+            Ok(Allowed { _private: () })
+        );
+    }
+
+    #[test]
+    fn a_bad_token_is_denied_for_a_good_request() {
+        assert_eq!(check(b"", &get("/")), Err(Denial::EmptyToken));
+        assert_eq!(check(b"v9", &get("/")), Err(Denial::UnknownVersion));
+        assert_eq!(check(b"v1;NOPE", &get("/")), Err(Denial::MalformedToken));
+        assert_eq!(check(b"v1;nope", &get("/")), Err(Denial::UnknownCaveatKind));
+    }
 
     #[test]
     fn equal_bytes_are_equal() {

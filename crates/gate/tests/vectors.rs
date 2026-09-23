@@ -13,14 +13,24 @@
 //! few lines below rather than the `hex` crate, so this test-only dependency tree
 //! stays free of build scripts and proc-macros too.
 //!
-//! `unwrap`/`expect`/`panic!` are used freely below: this file lives under `tests/`, so
-//! `cargo clippy` (run without `--tests`) never compiles it, and its panic lints from
-//! `[workspace.lints.clippy]` never apply here. A malformed *file* (bad JSON, an
-//! unknown "format", a case missing "name" or "expected") panics immediately, since
-//! that means the shared test data itself is broken. A malformed or mismatching *case
-//! value* (bad hex, a comparison that doesn't match "expected") is collected into
-//! `failures` instead, so one run reports every broken case at once rather than
-//! stopping at the first.
+//! `unwrap`/`expect`/`panic!` are used freely below: a test fails by panicking, so the
+//! panic lints from `[workspace.lints.clippy]` are allowed at the top of this file
+//! (`cargo clippy --all-targets` lints it like every other test). A
+//! malformed *file* (bad JSON, an unknown "format", a case missing "name" or
+//! "expected") panics immediately, since that means the shared test data itself is
+//! broken. A malformed or mismatching *case value* (bad hex, a comparison that doesn't
+//! match "expected") is collected into `failures` instead, so one run reports every
+//! broken case at once rather than stopping at the first.
+
+// A test binary: panicking is how a test fails. clippy.toml already exempts `#[test]`
+// functions from the panic lints; this extends that to the helpers they call.
+#![allow(
+    clippy::panic,
+    clippy::indexing_slicing,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::arithmetic_side_effects
+)]
 
 use gate::{compare_secrets, Comparison, GateError};
 use std::collections::HashMap;

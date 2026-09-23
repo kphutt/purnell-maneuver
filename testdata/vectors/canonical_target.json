@@ -1,0 +1,1936 @@
+{
+  "format": 1,
+  "about": "Canonicalizer conformance cases. Each case gives the raw request facts a server reports (method, scheme, authority, and path including any query, all exactly as received, as UTF-8 text) and either the canonical target or the named denial. Every server adapter must pass all of them through gate's observe; an adapter never compares raw strings itself. Denial names are the snake_case of gate::Denial variants. Readers ignore fields they don't know, so a case can gain a field (for example the raw request bytes) without bumping 'format'; a change to what an existing field means, or a new required field, bumps it. An expected target may also give 'authority': the host plus ':port' only when the port is not the scheme's default, the one spelling the canonicalizer accepts back. Nothing is case-folded: a scheme, host or IPv6 literal that is not already lowercase is denied. Cases named 'disagree_*' are known inputs that real parsers or routers read differently; every one must be denied. Cases named 'wpt_*' come from the web-platform-tests URL data (testdata/wpt).",
+  "cases": [
+    {
+      "name": "plain_get",
+      "note": "The everyday case: every field is already canonical.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders/7"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/orders/7",
+          "authority": "example.com"
+        }
+      }
+    },
+    {
+      "name": "query_is_dropped",
+      "note": "The query is never part of a target.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders/7?page=2&sort=asc"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/orders/7"
+        }
+      }
+    },
+    {
+      "name": "empty_query_is_dropped",
+      "note": "A bare '?' is an empty query.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/orders"
+        }
+      }
+    },
+    {
+      "name": "query_content_is_not_read",
+      "note": "Nothing after '?' is parsed, so nothing there can deny (except '#', below).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a?x=/../;%zz%2F"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a"
+        }
+      }
+    },
+    {
+      "name": "fragment_denied",
+      "note": "A request target never carries a fragment (RFC 9112 section 3.2); a '#' means something upstream is confused.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a#top"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "fragment_in_query_denied",
+      "note": "'#' is denied anywhere in the path field, query included.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a?x=1#top"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "method_case_kept",
+      "note": "Methods are case-sensitive (RFC 9110 section 9.1): 'get' is not 'GET' and is never folded.",
+      "request": {
+        "method": "get",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "get",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "method_extension",
+      "note": "Any RFC 9110 token is a method.",
+      "request": {
+        "method": "M-SEARCH",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "M-SEARCH",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "method_empty",
+      "request": {
+        "method": "",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "method_space",
+      "note": "A space is not a token character.",
+      "request": {
+        "method": "GE T",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "method_semicolon",
+      "note": "';' is not a token character.",
+      "request": {
+        "method": "GET;",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "method_non_ascii",
+      "request": {
+        "method": "G\u00c9T",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "method_at_limit",
+      "note": "Exactly 32 bytes is read.",
+      "request": {
+        "method": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "method_too_long",
+      "note": "Over 32 bytes: denied before it is read.",
+      "request": {
+        "method": "MMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMMM",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "request_too_long"
+      }
+    },
+    {
+      "name": "scheme_uppercase",
+      "note": "An uppercase scheme is denied, not folded: RFC 3986 calls scheme case insignificant, but folding is a merge the canonicalizer never makes.",
+      "request": {
+        "method": "GET",
+        "scheme": "HTTPS",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "scheme_mixed_case",
+      "note": "A scheme with any uppercase letter is denied, not folded.",
+      "request": {
+        "method": "GET",
+        "scheme": "Https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "scheme_http",
+      "request": {
+        "method": "GET",
+        "scheme": "http",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "http",
+          "host": "example.com",
+          "port": 80,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "scheme_ftp",
+      "note": "Only http and https are supported.",
+      "request": {
+        "method": "GET",
+        "scheme": "ftp",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "scheme_empty",
+      "request": {
+        "method": "GET",
+        "scheme": "",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "scheme_with_colon",
+      "note": "The scheme is the name only, never 'https:'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https:",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "host_mixed_case",
+      "note": "A host with any uppercase letter is denied, not lowercased: Go's net/http ServeMux matches the host byte for byte, so example.com and Example.COM can route to different handlers.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "Example.COM",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_uppercase",
+      "note": "An all-uppercase host is denied, not lowercased.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "EXAMPLE.COM",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_lowercase_kept",
+      "note": "A lowercase host is kept exactly.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/",
+          "authority": "example.com"
+        }
+      }
+    },
+    {
+      "name": "host_underscore",
+      "note": "'_' is allowed in a name.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "my_service.internal",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "my_service.internal",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "host_ipv4",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "192.0.2.1",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "192.0.2.1",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "host_ipv6_uppercase_hex",
+      "note": "IPv6 hex that is not lowercase is denied, not folded: RFC 5952 writes lowercase, and the canonicalizer accepts only that one text form.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[2001:DB8::1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6_mixed_case_hex",
+      "note": "One uppercase hex digit is enough to deny.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[fe80::abcD]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6",
+      "note": "An IPv6 literal in RFC 5952 form, lowercase hex, is kept in its brackets.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[2001:db8::1]",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "[2001:db8::1]",
+          "port": 443,
+          "path": "/",
+          "authority": "[2001:db8::1]"
+        }
+      }
+    },
+    {
+      "name": "host_ipv6_with_port",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::1]:8443",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "[::1]",
+          "port": 8443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "host_ipv6_not_rfc5952",
+      "note": "An IPv6 literal must already be in RFC 5952 form: '[0::1]' is '[::1]' to every parser, so it is denied rather than kept as a second spelling.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[0::1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6_unbracketed",
+      "note": "An IPv6 literal must be in brackets.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "::1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6_unclosed",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6_zone",
+      "note": "A zone id ('%25eth0') is denied.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[fe80::1%25eth0]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_punycode",
+      "note": "International names arrive as punycode.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "xn--exmple-cua.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "xn--exmple-cua.com",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "host_non_ascii",
+      "note": "A raw non-ASCII name is denied; send punycode.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "ex\u00e4mple.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_trailing_dot",
+      "note": "'example.com.' can resolve differently from 'example.com', so there is no one right answer.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com.",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_empty_label",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "a..example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_empty",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_userinfo",
+      "note": "User info is never part of a target (RFC 9110 section 4.2.4).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "user@example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_userinfo_with_password",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "user:pass@example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_percent",
+      "note": "Percent-encoding in a host is denied.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "exa%6Dple.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_at_limit",
+      "note": "A 253-byte name (the longest DNS name) is read.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "host_too_long",
+      "note": "A name over 253 bytes is denied.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "authority_too_long",
+      "note": "Over 259 bytes: denied before it is read.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "request_too_long"
+      }
+    },
+    {
+      "name": "port_default_https",
+      "note": "No port means the scheme's default.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/",
+          "authority": "example.com"
+        }
+      }
+    },
+    {
+      "name": "port_explicit_default",
+      "note": "':443' on https is denied, not merged with no port. The default is filled in only when the port is absent (RFC 3986 section 6.2.3 prefers omitting it).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "port_explicit_default_http",
+      "request": {
+        "method": "GET",
+        "scheme": "http",
+        "authority": "example.com:80",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      },
+      "note": "':80' on http is denied, like ':443' on https."
+    },
+    {
+      "name": "port_http_on_443",
+      "note": "http on port 443 is its own target, not https.",
+      "request": {
+        "method": "GET",
+        "scheme": "http",
+        "authority": "example.com:443",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "http",
+          "host": "example.com",
+          "port": 443,
+          "path": "/",
+          "authority": "example.com:443"
+        }
+      }
+    },
+    {
+      "name": "port_explicit",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:8443",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 8443,
+          "path": "/",
+          "authority": "example.com:8443"
+        }
+      }
+    },
+    {
+      "name": "port_max",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:65535",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 65535,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "port_empty",
+      "note": "An empty port after ':' is denied rather than read as the default.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "port_zero",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:0",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "port_leading_zero",
+      "note": "'0443' could be read as 443 or rejected; deny.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:0443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "port_too_big",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:65536",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "port_not_digits",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:44a",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "port_twice",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:443:443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "path_root",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/"
+        }
+      }
+    },
+    {
+      "name": "path_trailing_slash_kept",
+      "note": "A trailing slash is significant: '/a/' and '/a' are different targets.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a/"
+        }
+      }
+    },
+    {
+      "name": "path_case_kept",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/Orders"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/Orders"
+        }
+      }
+    },
+    {
+      "name": "path_empty",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": ""
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_relative",
+      "note": "The path must start with '/'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "orders"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_absolute_form",
+      "note": "Report the path only, never 'http://host/path'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "http://example.com/a"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_asterisk",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "*"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_dot_segment",
+      "note": "Dot segments are denied, not resolved.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/./b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_dot_dot_segment",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/../b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_trailing_dot_dot",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/.."
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_dots_in_a_name",
+      "note": "Dots that are not a whole segment are ordinary bytes.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/.well-known/a..b"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/.well-known/a..b"
+        }
+      }
+    },
+    {
+      "name": "path_empty_segment",
+      "note": "'//' is denied, not merged.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a//b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_leading_double_slash",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "//a"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_backslash",
+      "note": "Some servers read a backslash as '/'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a\\b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_semicolon",
+      "note": "Some frameworks strip ';parameters' before routing and some don't.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a;v=1"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_space",
+      "note": "A space must arrive as %20.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_space_encoded",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%20b"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a%20b"
+        }
+      }
+    },
+    {
+      "name": "path_raw_non_ascii",
+      "note": "Non-ASCII must arrive percent-encoded.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/caf\u00e9"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_nul",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a\u0000"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_plain_bytes_kept",
+      "note": "Letters, digits and these bytes may appear as-is.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a!$&'()*+,=:@~_-.b"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a!$&'()*+,=:@~_-.b"
+        }
+      }
+    },
+    {
+      "name": "path_percent_hex_lowercase",
+      "note": "Lowercase percent-hex is denied, not uppercased. RFC 3986 section 6.2.2.1 calls %c3 and %C3 equal, but a server routing on the raw path keeps them apart, so folding them would merge two destinations.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/caf%c3%a9"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_nfc",
+      "note": "'caf\u00e9' with a precomposed e-acute (NFC).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/caf%C3%A9"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/caf%C3%A9"
+        }
+      }
+    },
+    {
+      "name": "path_nfd",
+      "note": "'caf\u00e9' as e plus a combining acute (NFD). Compared as bytes, never Unicode-normalized, so this is a different target from path_nfc.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/cafe%CC%81"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/cafe%CC%81"
+        }
+      }
+    },
+    {
+      "name": "path_encoded_reserved_kept",
+      "note": "An encoded reserved character stays encoded: '%3F' is not '?'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%3Fb%23c%3Ad"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a%3Fb%23c%3Ad"
+        }
+      }
+    },
+    {
+      "name": "path_encoded_slash",
+      "note": "%2F changes how many segments the path has.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%2Fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_slash_lowercase",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%2fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_backslash",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%5Cb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_percent",
+      "note": "%25 is double encoding: the answer depends on how many times a server decodes.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%2541"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_semicolon",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%3Bb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_control",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%00"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_dot",
+      "note": "%2E could become a dot segment after decoding.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/%2E%2E/b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_letter",
+      "note": "RFC 3986 says an encoded letter, digit or '-._~' means the plain byte, but a server that routes on the raw path disagrees, so it is denied.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%61dmin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_encoded_tilde",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%7Euser"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_bad_percent",
+      "note": "A '%' needs two hex digits.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%G1"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_truncated_percent",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%4"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_lone_percent",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_at_limit",
+      "note": "4096 bytes, query included, is read.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      }
+    },
+    {
+      "name": "path_too_long",
+      "note": "Over 4096 bytes, query included: denied before it is read.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a?qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+      },
+      "expected": {
+        "denial": "request_too_long"
+      }
+    },
+    {
+      "name": "first_bad_field_wins",
+      "note": "Fields are read in the order method, scheme, host, port, path; the first bad one names the denial.",
+      "request": {
+        "method": "GE T",
+        "scheme": "ftp",
+        "authority": "example.com",
+        "path": "/a/../b"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "bounds_come_first",
+      "note": "Every field is bounded before any is read, so a too-long path denies even when the method is malformed.",
+      "request": {
+        "method": "",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      "expected": {
+        "denial": "request_too_long"
+      }
+    },
+    {
+      "name": "disagree_dot_dot",
+      "note": "Some servers resolve '..' (to /b), some reject it, some route it raw.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/../b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_dot_dot_lowercase",
+      "note": "Decoded once, this is a '..' segment; routed raw, it is a name.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/%2e%2e/b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_dot_mixed",
+      "note": "Half-encoded '..': WHATWG and some servers resolve it, others route it raw.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/%2E./b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_slash_uppercase",
+      "note": "One segment or two, depending on whether the server decodes before routing.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%2Fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_slash_lowercase",
+      "note": "Same as %2F, and lowercase hex besides.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%2fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_backslash",
+      "note": "Some servers decode and then treat '\\' as '/'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%5Cb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_backslash",
+      "note": "WHATWG and some servers read '\\' as '/', others as a name byte.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a\\b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_double_slash",
+      "note": "Some servers merge '//' into '/', others keep an empty segment.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a//b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_lowercase_hex",
+      "note": "RFC 3986 calls it equal to %C3%A9; a server routing on the raw path does not.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/caf%c3%a9"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_percent",
+      "note": "Double encoding: the answer depends on how many times a server decodes.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%25"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_encoded_letter",
+      "note": "RFC 3986 calls %41 equal to 'A'; a server routing on the raw path does not.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%41"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_fragment",
+      "note": "A fragment is never sent (RFC 9112 section 3.2); some servers strip it, some route it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a#b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "disagree_trailing_dot",
+      "note": "A fully qualified name and a relative one can resolve differently.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com.",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_explicit_default_port",
+      "note": "Equal to no port by RFC 9110, but not needed: only the absent port is filled in.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "disagree_empty_port",
+      "note": "Read as the default by some, rejected by others.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "disagree_leading_zero_port",
+      "note": "Read as 443 by some, rejected by others.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:0443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "disagree_short_ipv4",
+      "note": "WHATWG and inet_aton read it as 127.0.0.1; DNS reads it as a name.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "127.1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_hex_ipv4",
+      "note": "WHATWG and inet_aton read it as 127.0.0.1; DNS reads it as a name.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "0x7f.0.0.1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_decimal_ipv4",
+      "note": "WHATWG and inet_aton read it as 127.0.0.1.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "2130706433",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_single_number_host",
+      "note": "WHATWG reads it as 0.0.0.127.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "127",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_short_number_host",
+      "note": "WHATWG reads it as 0.0.0.88.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "88",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_hex_number_host",
+      "note": "WHATWG reads it as 0.0.7.241.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "0x7f1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_leading_zero_octet",
+      "note": "Octal to WHATWG and inet_aton, decimal to others.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "127.0.0.01",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_ipv6_not_rfc5952",
+      "note": "The same address as [::1], spelled a second way.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[0::1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_ipv6_uncompressed",
+      "note": "The same address as [::1], spelled a third way.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[0:0:0:0:0:0:0:1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_ipv6_embedded_ipv4",
+      "note": "Mixed notation; WHATWG writes it as [::ffff:c000:201]. Denied rather than choosing.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::ffff:192.0.2.1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_userinfo",
+      "note": "Not allowed in http(s) URIs (RFC 9110 section 4.2.4); some servers strip it, some route on it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "user@example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_host_case",
+      "note": "RFC 9110 lets a server fold host case, WHATWG lowercases it, and Go's net/http ServeMux matches it byte for byte.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "Example.com",
+        "path": "/admin"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_scheme_case",
+      "note": "RFC 3986 and WHATWG fold scheme case; a byte-for-byte router does not.",
+      "request": {
+        "method": "GET",
+        "scheme": "HTTPS",
+        "authority": "example.com",
+        "path": "/admin"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "disagree_ipv6_hex_case",
+      "note": "Resolvers read either hex case; a byte-for-byte router does not.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::A]",
+        "path": "/admin"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "wpt_ipv4_octet_over_255",
+      "note": "Not an IPv4 address; WHATWG rejects it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "256.0.0.1",
+        "path": "/test"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "wpt_ipv4_number_over_32_bits",
+      "note": "Over 32 bits; WHATWG rejects it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "0x100000000",
+        "path": "/test"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "wpt_ipv4_decimal_over_32_bits",
+      "note": "Over 32 bits; WHATWG rejects it.",
+      "request": {
+        "method": "GET",
+        "scheme": "http",
+        "authority": "0999999999999999999",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "wpt_ipv6_ipv4_first",
+      "note": "Not an IPv6 address; WHATWG rejects it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[192.0.2.1::]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "wpt_ipv6_bad_embedded_ipv4",
+      "note": "A leading zero in the embedded IPv4 part; WHATWG rejects it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[0:1:2:3:4:5:192.0.02.1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_dotted_quad_kept",
+      "note": "The one IPv4 spelling everyone reads the same way.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "127.0.0.1",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "127.0.0.1",
+          "port": 443,
+          "path": "/",
+          "authority": "127.0.0.1"
+        }
+      }
+    },
+    {
+      "name": "host_numeric_looking_name",
+      "note": "The last label is not a number, so this is a name.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "0x7f.example",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "0x7f.example",
+          "port": 443,
+          "path": "/",
+          "authority": "0x7f.example"
+        }
+      }
+    },
+    {
+      "name": "host_ipv6_rfc5952_kept",
+      "note": "Already in RFC 5952 form.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[2001:db8::1]:8443",
+        "path": "/"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "[2001:db8::1]",
+          "port": 8443,
+          "path": "/",
+          "authority": "[2001:db8::1]:8443"
+        }
+      }
+    },
+    {
+      "name": "path_uppercase_hex_kept",
+      "note": "Uppercase percent-hex is the canonical spelling and is kept exactly.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%3Ab%C3%A9"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a%3Ab%C3%A9"
+        }
+      }
+    }
+  ]
+}

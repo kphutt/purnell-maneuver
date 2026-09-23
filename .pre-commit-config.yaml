@@ -18,9 +18,11 @@ repos:
         pass_filenames: false
         stages: [pre-commit]
 
+      # --all-targets so test code (unit tests and crates/gate/tests/) is linted on
+      # every commit too, not only the library code.
       - id: cargo-clippy
-        name: cargo clippy --locked -- -D warnings
-        entry: cargo clippy --locked -- -D warnings
+        name: cargo clippy --locked --all-targets -- -D warnings
+        entry: cargo clippy --locked --all-targets -- -D warnings
         language: system
         always_run: true
         pass_filenames: false
@@ -65,24 +67,24 @@ repos:
         stages: [pre-push]
 
       - id: wasm-build-wasm32v1-none
-        name: cargo build -p seal -p gate --target wasm32v1-none --locked
-        entry: cargo build -p seal -p gate --target wasm32v1-none --locked
+        name: cargo build -p token -p seal -p gate --target wasm32v1-none --locked
+        entry: cargo build -p token -p seal -p gate --target wasm32v1-none --locked
         language: system
         always_run: true
         pass_filenames: false
         stages: [pre-push]
 
       - id: wasm-build-wasm32-unknown-unknown
-        name: cargo build -p seal -p gate --target wasm32-unknown-unknown --locked
-        entry: cargo build -p seal -p gate --target wasm32-unknown-unknown --locked
+        name: cargo build -p token -p seal -p gate --target wasm32-unknown-unknown --locked
+        entry: cargo build -p token -p seal -p gate --target wasm32-unknown-unknown --locked
         language: system
         always_run: true
         pass_filenames: false
         stages: [pre-push]
 
       - id: wasm-build-wasm32-wasip1
-        name: cargo build -p seal -p gate --target wasm32-wasip1 --locked
-        entry: cargo build -p seal -p gate --target wasm32-wasip1 --locked
+        name: cargo build -p token -p seal -p gate --target wasm32-wasip1 --locked
+        entry: cargo build -p token -p seal -p gate --target wasm32-wasip1 --locked
         language: system
         always_run: true
         pass_filenames: false

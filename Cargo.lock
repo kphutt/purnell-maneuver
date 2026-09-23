@@ -6,13 +6,18 @@ version = 4
 name = "gate"
 version = "0.1.0"
 dependencies = [
+ "seal",
  "subtle",
  "tinyjson",
+ "token",
 ]
 
 [[package]]
 name = "seal"
 version = "0.1.0"
+dependencies = [
+ "token",
+]
 
 [[package]]
 name = "subtle"
@@ -25,3 +30,7 @@ name = "tinyjson"
 version = "2.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ab95735ea2c8fd51154d01e39cf13912a78071c2d89abc49a7ef102a7dd725a"
+
+[[package]]
+name = "token"
+version = "0.1.0"

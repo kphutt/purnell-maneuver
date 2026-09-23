@@ -1,15 +1,16 @@
 [workspace]
 resolver = "2"
-members = ["crates/seal", "crates/gate"]
+members = ["crates/token", "crates/seal", "crates/gate"]
 
 [workspace.package]
 edition = "2021"
 publish = false
 
 # Shared with every workspace member via `[lints] workspace = true` in each crate's
-# Cargo.toml, so the "no unsafe, no panics" rules live in one place. `cargo clippy`
-# (without `--tests`) does not compile `#[cfg(test)]` code, so these deny levels are
-# enforced outside tests only, as the rules require.
+# Cargo.toml, so the "no unsafe, no panics" rules live in one place. The checks run
+# `cargo clippy --all-targets`, so test code is linted too; clippy.toml exempts
+# `#[test]` code from the panic lints, and each integration test file allows them at its
+# top, so these deny levels bite outside tests only, as the rules require.
 [workspace.lints.rust]
 unsafe_code = "forbid"
 
@@ -21,3 +22,7 @@ indexing_slicing = "deny"
 unreachable = "deny"
 todo = "deny"
 unimplemented = "deny"
+# No arithmetic that can overflow (or divide by zero) in the core: use checked_*
+# (or a form that cannot overflow) instead. Test code allows it at the top of each
+# test module and integration test file, since a test fails by panicking anyway.
+arithmetic_side_effects = "deny"

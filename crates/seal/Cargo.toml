@@ -3,10 +3,13 @@ name = "seal"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
-description = "purnell-maneuver signing side (no_std). Empty for now: there is no signing yet."
+description = "purnell-maneuver sealing side (no_std): learns a caveat set from observed requests and seals it into a token."
 
 [lib]
 name = "seal"
+
+[dependencies]
+token = { path = "../token", version = "0.1.0" }
 
 [lints]
 workspace = true

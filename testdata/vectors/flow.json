@@ -1,0 +1,862 @@
+{
+  "format": 1,
+  "about": "End-to-end cases: each case observes some raw requests, learns a caveat set from them, seals it into a token, then checks more raw requests against that token. No caveat or valid token is ever written here: the only way to a valid token is observe, learn, seal. 'bad_tokens' are hand-written malformed tokens, each checked against the request 'GET https api.example.com /orders'; none may ever be allowed. (A hand-written token that is exactly canonical is allowed today, because tokens are not signed yet; that known gap is pinned by a unit test in gate, never by a vector.) Expected values are 'allowed' or the snake_case of a gate::Denial variant.",
+  "cases": [
+    {
+      "name": "nothing_observed_allows_nothing",
+      "note": "An empty caveat set allows nothing.",
+      "observed": [],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "observed_request_is_allowed",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders?page=2"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "HTTPS",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "unsupported_scheme"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "API.example.com",
+            "path": "/orders"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "API.EXAMPLE.COM",
+            "path": "/orders"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com:443",
+            "path": "/orders"
+          },
+          "expected": "malformed_port"
+        }
+      ],
+      "note": "The query is dropped. Scheme and host case are denied, not folded, and an explicit default port is denied, not merged with no port."
+    },
+    {
+      "name": "only_the_exact_destination",
+      "note": "Paths match exactly: no prefixes, no wildcards, and a trailing slash is significant.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders/"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders/7"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/order"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/Orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "method_is_part_of_the_destination",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "get",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "scheme_host_and_port_are_part_of_the_destination",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "http",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "http",
+            "authority": "api.example.com:443",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com:8443",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "example.com",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com.evil.test",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "many_observations_one_set",
+      "note": "Repeats of one destination, with or without a query, learn one caveat. A spelling with uppercase in the host is denied, so it is never learned.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        },
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders?page=2"
+        },
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        },
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "API.EXAMPLE.COM",
+          "path": "/admin"
+        },
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders"
+        },
+        {
+          "method": "DELETE",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/orders/7"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "DELETE",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders/7"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders/7"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "DELETE",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders/8"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "malformed_observations_are_not_learned",
+      "note": "A request the canonicalizer denies is never learned, and is denied when checked.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/a/../admin"
+        },
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/%61dmin"
+        },
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/admin;x"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/a/../admin"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/%61dmin"
+          },
+          "expected": "malformed_path"
+        }
+      ]
+    },
+    {
+      "name": "bypass_spellings_are_denied",
+      "note": "Spellings a server might route to the learned path are denied, never matched.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/admin/users"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin/users"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin/./users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin//users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin%2Fusers"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin/x/../users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin;/users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin\\users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/%61dmin/users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin/users#frag"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "user@api.example.com",
+            "path": "/admin/users"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com.",
+            "path": "/admin/users"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin%2fusers"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin/x/%2e%2e/users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/admin/x/%2E./users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/%41dmin/users"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com:443",
+            "path": "/admin/users"
+          },
+          "expected": "malformed_port"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com:0443",
+            "path": "/admin/users"
+          },
+          "expected": "malformed_port"
+        }
+      ]
+    },
+    {
+      "name": "unicode_is_bytes",
+      "note": "NFC and NFD spellings are different destinations, and lowercase percent-hex is denied rather than folded to uppercase.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com",
+          "path": "/caf%C3%A9"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/caf%c3%a9"
+          },
+          "expected": "malformed_path"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/cafe%CC%81"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "numeric_hosts_have_one_spelling",
+      "note": "A host that ends in a number must be a dotted quad: browsers and resolvers read 127.1, 0x7f.0.0.1 and 2130706433 as 127.0.0.1, so each is denied, never matched. An IPv6 literal must be in RFC 5952 form.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "127.0.0.1",
+          "path": "/health"
+        },
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "[::1]",
+          "path": "/health"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "127.0.0.1",
+            "path": "/health"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "127.1",
+            "path": "/health"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "0x7f.0.0.1",
+            "path": "/health"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "2130706433",
+            "path": "/health"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "127.0.0.01",
+            "path": "/health"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "[::1]",
+            "path": "/health"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "[0::1]",
+            "path": "/health"
+          },
+          "expected": "malformed_host"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "[0:0:0:0:0:0:0:1]",
+            "path": "/health"
+          },
+          "expected": "malformed_host"
+        }
+      ]
+    },
+    {
+      "name": "explicit_ports_are_their_own_destination",
+      "note": "A port other than the default is part of the destination; the default written out denies.",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "api.example.com:8443",
+          "path": "/orders"
+        },
+        {
+          "method": "GET",
+          "scheme": "http",
+          "authority": "api.example.com",
+          "path": "/orders"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com:8443",
+            "path": "/orders"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "http",
+            "authority": "api.example.com",
+            "path": "/orders"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "http",
+            "authority": "api.example.com:80",
+            "path": "/orders"
+          },
+          "expected": "malformed_port"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "http",
+            "authority": "api.example.com:443",
+            "path": "/orders"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    }
+  ],
+  "bad_tokens": [
+    {
+      "name": "empty",
+      "token": "",
+      "expected": "empty_token"
+    },
+    {
+      "name": "unknown_version",
+      "token": "v2;http GET https api.example.com /orders",
+      "expected": "unknown_version"
+    },
+    {
+      "name": "no_version",
+      "token": "http GET https api.example.com /orders",
+      "expected": "unknown_version"
+    },
+    {
+      "name": "uppercase_version",
+      "token": "V1",
+      "expected": "unknown_version"
+    },
+    {
+      "name": "trailing_separator",
+      "token": "v1;",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "missing_kind",
+      "token": "v1;GET https api.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "old_layout_without_kind",
+      "token": "v1;GET https api.example.com 443 /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "missing_field",
+      "token": "v1;http GET https api.example.com",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "extra_field",
+      "token": "v1;http GET https api.example.com /orders x",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "not_canonical_kind",
+      "token": "v1;HTTP GET https api.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "not_canonical_scheme",
+      "token": "v1;http GET HTTPS api.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "not_canonical_host",
+      "token": "v1;http GET https API.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "not_canonical_port",
+      "token": "v1;http GET https api.example.com:0443 /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "explicit_default_port",
+      "token": "v1;http GET https api.example.com:443 /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "lowercase_percent_hex",
+      "token": "v1;http GET https api.example.com /orders%c3%a9",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "path_with_query",
+      "token": "v1;http GET https api.example.com /orders?x",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "wildcard_is_just_a_bad_path",
+      "token": "v1;http GET https api.example.com *",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "repeated_caveat",
+      "token": "v1;http GET https api.example.com /orders;http GET https api.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "unsorted_caveats",
+      "token": "v1;http GET https api.example.com /z;http GET https api.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "unknown_kind",
+      "token": "v1;mcp tools/call search",
+      "expected": "unknown_caveat_kind"
+    },
+    {
+      "name": "unknown_kind_next_to_a_match",
+      "note": "A caveat of an unknown kind is never skipped: the whole token denies, even though the other caveat lists the request.",
+      "token": "v1;http GET https api.example.com /orders;mcp tools/call search",
+      "expected": "unknown_caveat_kind"
+    }
+  ]
+}
