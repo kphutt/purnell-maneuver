@@ -8,6 +8,14 @@ description = "purnell-maneuver server side (no_std): observes requests and chec
 [lib]
 name = "gate"
 
+# A small hand-written CLI walkthrough of observe -> learn -> seal -> check
+# (`cargo run --example try -- ...`). `test = true` so its `#[cfg(test)]` unit tests run
+# under plain `cargo test`, the same as any other code here, instead of needing a
+# separate `cargo test --example try`.
+[[example]]
+name = "try"
+test = true
+
 [dependencies]
 # Pure Rust, no_std-capable constant-time comparison. `default-features = false` drops
 # its "std" feature so it stays no_std here.
