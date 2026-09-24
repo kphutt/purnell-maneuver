@@ -38,23 +38,11 @@ const KNOWN_FORMAT: f64 = 1.0;
 const CANONICAL_JSON: &str = include_str!("../../../testdata/vectors/canonical_target.json");
 const FLOW_JSON: &str = include_str!("../../../testdata/vectors/flow.json");
 
-/// The snake_case name a vector file uses for each denial.
+/// The snake_case name a vector file uses for each denial. `Denial::name` is the one
+/// source of truth for this mapping; kept as a thin local alias so the call sites
+/// below read as "the vector's name for this denial" rather than the method name.
 fn denial_name(denial: Denial) -> &'static str {
-    match denial {
-        Denial::EmptyToken => "empty_token",
-        Denial::TokenTooLong => "token_too_long",
-        Denial::UnknownVersion => "unknown_version",
-        Denial::MalformedToken => "malformed_token",
-        Denial::UnknownCaveatKind => "unknown_caveat_kind",
-        Denial::RequestTooLong => "request_too_long",
-        Denial::MalformedMethod => "malformed_method",
-        Denial::UnsupportedScheme => "unsupported_scheme",
-        Denial::MalformedHost => "malformed_host",
-        Denial::MalformedPort => "malformed_port",
-        Denial::MalformedPath => "malformed_path",
-        Denial::NotListed => "not_listed",
-        _ => "a denial this test does not know yet",
-    }
+    denial.name()
 }
 
 /// Parses a vector file and checks its `"format"`.

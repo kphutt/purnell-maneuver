@@ -148,39 +148,50 @@ fn target_line(target: &Target) -> String {
 /// `Denial` and the canonicalizer's rules; kept here because the core crates
 /// return only the named case, never a text message, so any prose has to live in the CLI
 /// that prints it.
-fn denial_reason(denial: Denial) -> &'static str {
+fn denial_reason(denial: Denial) -> String {
     match denial {
-        Denial::EmptyToken => "the token was zero bytes long",
-        Denial::TokenTooLong => "the token was longer than the maximum token length",
-        Denial::UnknownVersion => "the token's version is not one this build knows (only v1 today)",
+        Denial::EmptyToken => "the token was zero bytes long".to_string(),
+        Denial::TokenTooLong => "the token was longer than the maximum token length".to_string(),
+        Denial::UnknownVersion => {
+            "the token's version is not one this build knows (only v1 today)".to_string()
+        }
         Denial::MalformedToken => {
-            "the token said v1 but its body is not exactly what seal would have written"
+            "the token said v1 but its body is not exactly what seal would have written".to_string()
         }
         Denial::UnknownCaveatKind => {
-            "the token holds a caveat kind this build does not know (only http today)"
+            "the token holds a caveat kind this build does not know (only http today)".to_string()
         }
-        Denial::RequestTooLong => "a request field was longer than its limit",
-        Denial::MalformedMethod => "the method is empty or is not a valid HTTP token",
-        Denial::UnsupportedScheme => "the scheme is not http or https",
+        Denial::RequestTooLong => "a request field was longer than its limit".to_string(),
+        Denial::MalformedMethod => "the method is empty or is not a valid HTTP token".to_string(),
+        Denial::UnsupportedScheme => "the scheme is not http or https".to_string(),
         Denial::MalformedHost => {
             "the host is empty, has an empty label or a trailing dot, an unsupported \
              byte, or a non-canonical numeric or IPv6 form"
+                .to_string()
         }
         Denial::MalformedPort => {
             "the port is empty, zero, has a leading zero, is not all digits, is above \
              65535, or spells out the scheme's default"
+                .to_string()
         }
         Denial::MalformedPath => {
             "the path does not start with \"/\", or has a \".\", \"..\" or empty \
              segment, or a byte the canonicalizer will not pass through unchanged"
+                .to_string()
         }
         Denial::NotListed => {
             "the request and the token are both well formed, but the token does not \
              list this exact target"
+                .to_string()
         }
         // `Denial` is `#[non_exhaustive]`: a later version of `token` may add a case
-        // this build has never heard of.
-        _ => "denied for a reason newer than this example knows about",
+        // this build has never heard of. It still has a stable name -- `Denial::name`
+        // has no catch-all of its own (see `crates/token/src/denial.rs`) -- so the
+        // fallback narrates that name instead of going fully generic.
+        _ => format!(
+            "denied for a reason newer than this example knows about ({})",
+            denial.name()
+        ),
     }
 }
 
@@ -235,7 +246,7 @@ fn run_observe(args: &[String], explain: bool) -> (String, i32) {
             out.push_str("-> denied: ");
             out.push_str(&format!("{denial:?}"));
             out.push_str(" \u{2014} ");
-            out.push_str(denial_reason(denial));
+            out.push_str(&denial_reason(denial));
             (out, EXIT_DENIED)
         }
     }
@@ -275,7 +286,7 @@ fn run_check(args: &[String], explain: bool) -> (String, i32) {
             out.push_str("-> the request itself is denied, so the token is never read: ");
             out.push_str(&format!("{denial:?}"));
             out.push_str(" \u{2014} ");
-            out.push_str(denial_reason(denial));
+            out.push_str(&denial_reason(denial));
             (out, EXIT_DENIED)
         }
         Ok(target) => {
@@ -291,7 +302,7 @@ fn run_check(args: &[String], explain: bool) -> (String, i32) {
                     out.push_str("-> the token did not decode: ");
                     out.push_str(&format!("{denial:?}"));
                     out.push_str(" \u{2014} ");
-                    out.push_str(denial_reason(denial));
+                    out.push_str(&denial_reason(denial));
                     (out, EXIT_DENIED)
                 }
                 Err(denial) => {
@@ -351,7 +362,7 @@ fn run_seal(args: &[String], explain: bool) -> (String, i32) {
                     narration.push_str("  -> denied, so learning stops here: ");
                     narration.push_str(&format!("{denial:?}"));
                     narration.push_str(" \u{2014} ");
-                    narration.push_str(denial_reason(denial));
+                    narration.push_str(&denial_reason(denial));
                     return (narration, EXIT_DENIED);
                 }
                 return (

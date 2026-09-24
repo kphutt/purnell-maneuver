@@ -46,3 +46,94 @@ pub enum Denial {
     /// caveat set.
     NotListed,
 }
+
+impl Denial {
+    /// This variant's stable, snake_case name.
+    ///
+    /// The one place that maps a `Denial` to a name for anything outside this crate
+    /// (a test vector file, a CLI's narration): everywhere else derives its name from
+    /// here instead of keeping its own table. Written right next to the variants above,
+    /// so a new variant is named in the same place it is added, and this match has no
+    /// catch-all arm, so forgetting a variant here is a compile error in this crate --
+    /// unlike a match on `Denial` outside it, which `#[non_exhaustive]` forces to carry
+    /// a catch-all, and which a new variant would then reach silently.
+    pub fn name(self) -> &'static str {
+        match self {
+            Denial::EmptyToken => "empty_token",
+            Denial::TokenTooLong => "token_too_long",
+            Denial::UnknownVersion => "unknown_version",
+            Denial::MalformedToken => "malformed_token",
+            Denial::UnknownCaveatKind => "unknown_caveat_kind",
+            Denial::RequestTooLong => "request_too_long",
+            Denial::MalformedMethod => "malformed_method",
+            Denial::UnsupportedScheme => "unsupported_scheme",
+            Denial::MalformedHost => "malformed_host",
+            Denial::MalformedPort => "malformed_port",
+            Denial::MalformedPath => "malformed_path",
+            Denial::NotListed => "not_listed",
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec::Vec;
+
+    /// Every `Denial` variant, once. Kept complete by `assert_matches_every_variant`
+    /// below: adding a variant to the enum without adding it here fails to compile,
+    /// so this list cannot silently fall out of sync the way a maintained-by-hand
+    /// mapping (with a catch-all arm) could.
+    const ALL: &[Denial] = &[
+        Denial::EmptyToken,
+        Denial::TokenTooLong,
+        Denial::UnknownVersion,
+        Denial::MalformedToken,
+        Denial::UnknownCaveatKind,
+        Denial::RequestTooLong,
+        Denial::MalformedMethod,
+        Denial::UnsupportedScheme,
+        Denial::MalformedHost,
+        Denial::MalformedPort,
+        Denial::MalformedPath,
+        Denial::NotListed,
+    ];
+
+    /// Does nothing but match every case of `denial` with no catch-all arm: proof, at
+    /// compile time, that `ALL` above still names every variant `Denial` has. If a
+    /// variant is added to the enum but not to `ALL`, this function -- not just a
+    /// runtime assertion -- fails to compile.
+    fn assert_matches_every_variant(denial: Denial) {
+        match denial {
+            Denial::EmptyToken
+            | Denial::TokenTooLong
+            | Denial::UnknownVersion
+            | Denial::MalformedToken
+            | Denial::UnknownCaveatKind
+            | Denial::RequestTooLong
+            | Denial::MalformedMethod
+            | Denial::UnsupportedScheme
+            | Denial::MalformedHost
+            | Denial::MalformedPort
+            | Denial::MalformedPath
+            | Denial::NotListed => {}
+        }
+    }
+
+    #[test]
+    fn every_variant_has_a_unique_name() {
+        for denial in ALL {
+            assert_matches_every_variant(*denial);
+        }
+
+        let mut names: Vec<&str> = ALL.iter().map(|denial| denial.name()).collect();
+        let case_count = names.len();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(
+            names.len(),
+            case_count,
+            "two Denial variants share a name: {names:?}"
+        );
+    }
+}
