@@ -22,7 +22,11 @@
 //! router may keep the cases apart. An input WHATWG parses that is denied for its
 //! scheme or host, and that lowercasing its scheme and authority gets past that denial
 //! (to a target, or to a denial of a later field), is recorded as an intentional case
-//! denial and listed, apart from the other false denials.
+//! denial and listed, apart from the other false denials. In today's data all such
+//! inputs have no path at all (an empty raw path, which the canonicalizer always
+//! denies), so lowercasing never actually reaches a target for them; the list shows
+//! only that the *scheme or host* denial fired before the path did, not that case was
+//! the only thing standing between the input and acceptance.
 
 // A test binary: panicking is how a test fails. clippy.toml already exempts `#[test]`
 // functions from the panic lints; this extends that to the helpers they call.
@@ -173,6 +177,12 @@ fn whatwg_url_test_data_agrees_where_the_canonicalizer_accepts() {
         println!("  intentional case denial (WHATWG lowercases, we deny): {input}");
     }
     assert!(applicable > 0, "no http(s) cases found; is the file right?");
+    // Claims 2 and 3 range over the accepted inputs; if a future tightening denied
+    // them all, both would pass with no signal. This floor catches that.
+    assert!(
+        accepted >= 22,
+        "the WPT oracle accepted {accepted} inputs; claims 2 and 3 are now vacuous"
+    );
     // Every broken claim is reported at once, so one run names every failing input.
     let mut problems = String::new();
     for (claim, list) in [

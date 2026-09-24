@@ -140,6 +140,7 @@ fn is_named(denial: Denial) -> bool {
 #[test]
 fn random_input_never_panics_and_always_gets_a_named_answer() {
     let mut rng = Rng(0x5eed_1234_abcd_0001);
+    let mut allow_hits = 0u32;
     for round in 0..20_000 {
         let request: [Vec<u8>; 4] = if rng.below(2) == 0 {
             plausible(&mut rng)
@@ -169,13 +170,35 @@ fn random_input_never_panics_and_always_gets_a_named_answer() {
             }
             // A real sealed token: allowed exactly when the request was observed.
             1 => {
+                // Keep each draw that produced an observation, so the checked request
+                // can reuse one and actually get allowed, not just checked against
+                // targets it almost never matches.
+                let mut observed_draws: Vec<[Vec<u8>; 4]> = Vec::new();
                 let observed: Vec<Target> = (0..rng.below(4))
-                    .filter_map(|_| observe(&facts(&plausible(&mut rng))).ok())
+                    .filter_map(|_| {
+                        let fields = plausible(&mut rng);
+                        let target = observe(&facts(&fields)).ok();
+                        if target.is_some() {
+                            observed_draws.push(fields);
+                        }
+                        target
+                    })
                     .collect();
+                // About half the time, check the exact bytes of an observed draw, so
+                // `Ok(Allowed)` happens often enough to be a real assertion instead of
+                // almost never firing.
+                let request = if !observed_draws.is_empty() && rng.below(2) == 0 {
+                    rng.pick(&observed_draws).clone()
+                } else {
+                    request
+                };
                 let token = seal::seal(&seal::learn(&observed)).unwrap();
                 let listed = observe(&facts(&request)).is_ok_and(|t| observed.contains(&t));
                 match check(token.as_bytes(), &facts(&request)) {
-                    Ok(_) => assert!(listed, "round {round}: allowed an unobserved request"),
+                    Ok(_) => {
+                        allow_hits += 1;
+                        assert!(listed, "round {round}: allowed an unobserved request");
+                    }
                     Err(denial) => {
                         assert!(is_named(denial), "round {round}: {denial:?}");
                         assert!(
@@ -207,4 +230,9 @@ fn random_input_never_panics_and_always_gets_a_named_answer() {
             }
         }
     }
+    println!("real sealed token: {allow_hits} allow hits");
+    assert!(
+        allow_hits > 100,
+        "the real-token branch must reach Ok(Allowed) often, not almost never"
+    );
 }
