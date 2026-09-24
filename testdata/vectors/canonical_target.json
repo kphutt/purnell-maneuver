@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "about": "Canonicalizer conformance cases. Each case gives the raw request facts a server reports (method, scheme, authority, and path including any query, all exactly as received, as UTF-8 text) and either the canonical target or the named denial. Every server adapter must pass all of them through gate's observe; an adapter never compares raw strings itself. Denial names are the snake_case of gate::Denial variants. Readers ignore fields they don't know, so a case can gain a field (for example the raw request bytes) without bumping 'format'; a change to what an existing field means, or a new required field, bumps it. An expected target may also give 'authority': the host plus ':port' only when the port is not the scheme's default, the one spelling the canonicalizer accepts back. Nothing is case-folded: a scheme, host or IPv6 literal that is not already lowercase is denied. Cases named 'disagree_*' are known inputs that real parsers or routers read differently; every one must be denied. Cases named 'wpt_*' come from the web-platform-tests URL data (testdata/wpt).",
+  "about": "Canonicalizer conformance cases. Each case gives the raw request facts a server reports (method, scheme, authority, and path including any query, all exactly as received, as UTF-8 text) and either the canonical target or the named denial. Every server adapter must pass all of them through gate's observe; an adapter never compares raw strings itself. Denial names are the snake_case of gate::Denial variants. Readers ignore fields they don't know, so a case can gain a field (for example the raw request bytes) without bumping 'format'; a change to what an existing field means, or a new required field, bumps it. An expected target may also give 'authority': the host plus ':port' only when the port is not the scheme's default, the one spelling the canonicalizer accepts back. Nothing is case-folded: a scheme, host or IPv6 literal that is not already lowercase is denied. Cases named 'disagree_*' are known inputs that real parsers or routers read differently; every one must be denied. Cases named 'wpt_*' come from the web-platform-tests URL data (testdata/wpt). Cases named 'attack_*' are published real-world bypass and parser-confusion payloads, each with its source named in its 'note'; the ones the canonicalizer accepts are named 'attack_accepted_*', so nothing that is let through can hide in a list of denials.",
   "cases": [
     {
       "name": "plain_get",
@@ -1929,6 +1929,1290 @@
           "host": "example.com",
           "port": 443,
           "path": "/a%3Ab%C3%A9"
+        }
+      }
+    },
+    {
+      "name": "attack_tsai_dot_dot_path_parameter",
+      "note": "Orange Tsai, \"Breaking Parser Logic: Take Your Path Normalization Off and Pop 0days Out!\", Black Hat USA 2018. A reverse proxy sees '/portal/..;' as one opaque segment; Tomcat strips the ';' parameter and resolves the '..', reaching /manager. The ';' byte denies it here, before the '..' rule is even reached.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/portal/..;/manager/html"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_tsai_path_parameter",
+      "note": "Orange Tsai, \"Breaking Parser Logic: Take Your Path Normalization Off and Pop 0days Out!\", Black Hat USA 2018. Some frameworks strip ';name=value' from a segment before routing and some do not, so the two disagree about which handler this is.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin;jsessionid=1"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_tsai_encoded_path_parameter",
+      "note": "Orange Tsai, \"Breaking Parser Logic: Take Your Path Normalization Off and Pop 0days Out!\", Black Hat USA 2018. The same trick with the ';' percent-encoded, for a proxy that decodes once before routing.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/portal/..%3B/manager/html"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_tsai_semicolon_only_segment",
+      "note": "Orange Tsai, \"Breaking Parser Logic: Take Your Path Normalization Off and Pop 0days Out!\", Black Hat USA 2018. A segment that is nothing but a path parameter: it disappears entirely on a server that strips parameters, so '/;/admin' becomes '/admin'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/;/admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_tsai_trailing_dot_dot_parameter",
+      "note": "Orange Tsai, \"Breaking Parser Logic: Take Your Path Normalization Off and Pop 0days Out!\", Black Hat USA 2018. '..;' at the end of the target.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin/..;"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_envoy_escaped_slash_traversal",
+      "note": "Envoy CVE-2021-29492 (escaped slashes were not decoded before path-based RBAC/JWT rules ran) and Istio CVE-2021-31920 / ISTIO-SECURITY-2021-005. The advisory's own example shape: a back end that reads %2F as '/' resolves this to /admin while the proxy's rule saw one long segment.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/public/..%2F..%2Fadmin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_envoy_escaped_slash_lowercase",
+      "note": "Envoy CVE-2021-29492 (escaped slashes were not decoded before path-based RBAC/JWT rules ran) and Istio CVE-2021-31920 / ISTIO-SECURITY-2021-005. The same payload with lowercase percent-hex, which a proxy comparing raw bytes treats as a different string again.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/public/..%2f..%2fadmin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_envoy_escaped_backslash_traversal",
+      "note": "Envoy CVE-2021-29492 (escaped slashes were not decoded before path-based RBAC/JWT rules ran) and Istio CVE-2021-31920 / ISTIO-SECURITY-2021-005. The advisory names %5C as well as %2F: a back end on Windows, or any that reads '\\' as '/', resolves this to /admin.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/public/..%5C..%5Cadmin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_envoy_escaped_backslash_lowercase",
+      "note": "Envoy CVE-2021-29492 (escaped slashes were not decoded before path-based RBAC/JWT rules ran) and Istio CVE-2021-31920 / ISTIO-SECURITY-2021-005. Lowercase spelling of the same escaped backslash.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/public/..%5c..%5cadmin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_envoy_raw_backslash_traversal",
+      "note": "Envoy CVE-2021-29492 (escaped slashes were not decoded before path-based RBAC/JWT rules ran) and Istio CVE-2021-31920 / ISTIO-SECURITY-2021-005. Raw backslashes, which the advisory pairs with %5C: some servers read '\\' as a path separator and some read it as an ordinary character.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/public\\..\\..\\admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_istio_leading_double_slash",
+      "note": "Istio CVE-2021-31920 / ISTIO-SECURITY-2021-005: a DENY policy on /admin did not reject //admin, and a back end that merges repeated slashes served /admin.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "//admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_istio_trailing_double_slash",
+      "note": "Istio CVE-2021-31920: the same merge, with the repeated slash at the end.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin//"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_istio_internal_double_slash",
+      "note": "Istio CVE-2021-31920: the same merge in the middle of a path.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a//admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_accepted_istio_exact_path",
+      "note": "Istio CVE-2020-8595 / ISTIO-SECURITY-2020-001: appending '?' or '#' to a URI defeated an exact-path JWT rule, because the policy compared the whole request target while Envoy routed on the path alone. The plain path, for the pair below.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_istio_trailing_question",
+      "note": "Istio CVE-2020-8595 / ISTIO-SECURITY-2020-001: appending '?' or '#' to a URI defeated an exact-path JWT rule, because the policy compared the whole request target while Envoy routed on the path alone. Accepted, and on purpose the same target as the case above: the query is dropped, which is the one merge the canonicalizer makes. Dropping it is the side Envoy routes on, so this pair closes the CVE rather than reproducing it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin?"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_istio_trailing_hash",
+      "note": "Istio CVE-2020-8595 / ISTIO-SECURITY-2020-001: appending '?' or '#' to a URI defeated an exact-path JWT rule, because the policy compared the whole request target while Envoy routed on the path alone. The '#' half of the same CVE. A fragment is never sent in a request target, so its presence means something upstream is confused.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin#"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_apache_encoded_dot_traversal",
+      "note": "Apache httpd CVE-2021-41773 and its incomplete-fix follow-up CVE-2021-42013. The in-the-wild payload: one dot left plain so the normalizer does not see a '..' segment, the rest percent-encoded.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/cgi-bin/.%2e/%2e%2e/%2e%2e/etc/passwd"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_apache_encoded_dot_traversal_uppercase",
+      "note": "Apache httpd CVE-2021-41773 and its incomplete-fix follow-up CVE-2021-42013. The same payload spelled with uppercase percent-hex.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/cgi-bin/.%2E/%2E%2E/%2E%2E/etc/passwd"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_apache_double_encoded_dot",
+      "note": "Apache httpd CVE-2021-41773 and its incomplete-fix follow-up CVE-2021-42013. CVE-2021-42013 bypassed the first fix by encoding the '%' itself: '%%32%65' decodes to '%2e' and then to '.'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/cgi-bin/.%%32%65/%%32%65%%32%65/etc/passwd"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_jetty_encoded_dot_segment",
+      "note": "Eclipse Jetty CVE-2021-28164 and CVE-2021-34429 (ambiguous paths reach WEB-INF). CVE-2021-28164's payload: an encoded '.' segment that the security constraint did not see but the file lookup did.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%2e/WEB-INF/web.xml"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_jetty_u_escape_dot",
+      "note": "Eclipse Jetty CVE-2021-28164 and CVE-2021-34429 (ambiguous paths reach WEB-INF). CVE-2021-34429's '%u002e', a non-standard 16-bit escape some parsers accept. Here '%u0' is not two hex digits, so it denies.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%u002e/WEB-INF/web.xml"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_jetty_encoded_nul_segment",
+      "note": "Eclipse Jetty CVE-2021-28164 and CVE-2021-34429 (ambiguous paths reach WEB-INF). CVE-2021-34429's other payload: an encoded NUL ends the string for a C-level consumer but not for the Java one.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/.%00/WEB-INF/web.xml"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_dot_dot_slash_slash",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. '....//' survives a filter that deletes one '../' and leaves '../' behind.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/....//admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_dot_dot_dot_slash",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. '.../' and './' mixed so a one-pass filter leaves a real dot segment.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/.../././admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_double_encoded_dot_dot",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. Double encoding: '%252e' decodes to '%2e' and then to '.', so a proxy that decodes once and a back end that decodes twice disagree.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/%252e%252e/b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_triple_encoded_dot_dot",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. Triple encoding, for a chain with three decoders in it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/%25252e%25252e/b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_double_encoded_slash",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. Double-encoded separator.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%252Fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_fully_encoded_traversal",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. Every byte of '../' encoded.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/%2E%2E%2Fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_mixed_encoded_traversal",
+      "note": "swisskyrepo/PayloadsAllTheThings, 'Directory Traversal' (Intruder/traversals-8-deep-exotic-encoding.txt), the same list SecLists carries as LFI fuzzing input. One dot plain, one encoded, separator encoded.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/.%2E%2Fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_overlong_slash_lowercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. The original payload, in the lowercase hex it is always published in, which denies for its hex case before the overlong form matters.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/scripts/..%c0%af../winnt/system32/cmd.exe"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_accepted_overlong_slash_uppercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED, kept encoded byte for byte. Nothing decodes it here, so the target is this exact spelling and no other request shares it; but a back end that decodes overlong UTF-8 would read this target as '/scripts/../../winnt/...'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/scripts/..%C0%AF../winnt/system32/cmd.exe"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/scripts/..%C0%AF../winnt/system32/cmd.exe"
+        }
+      }
+    },
+    {
+      "name": "attack_overlong_dot_lowercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. An overlong '..' segment, lowercase.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%c0%ae%c0%ae/admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_accepted_overlong_dot_uppercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED: the segment is four percent-escapes, not '..', so the dot segment rule never sees it. A decoder that accepts overlong UTF-8 reads this target as '/../admin'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%C0%AE%C0%AE/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/%C0%AE%C0%AE/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_overlong_backslash_uppercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED: %C1%9C is an overlong '\\', which a server reading '\\' as a separator would resolve.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/..%C1%9C../admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a/..%C1%9C../admin"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_overlong_nul",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED: %C0%80 is an overlong NUL. A plain %00 denies (an encoded control byte); this spelling of the same byte does not.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin%C0%80"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin%C0%80"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_fullwidth_solidus",
+      "note": "The full-width and look-alike section of PayloadsAllTheThings 'Directory Traversal' (%uff0e / %uff0f / %u2215): U+FF0F FULLWIDTH SOLIDUS, U+FF0E FULLWIDTH FULL STOP and U+2215 DIVISION SLASH are mapped to ASCII '/' and '.' by best-fit character mapping in some stacks. ACCEPTED as UTF-8 percent-escapes (U+FF0F is EF BC 8F). Kept encoded; a best-fit mapping would read it as '/'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%EF%BC%8Fb"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a%EF%BC%8Fb"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_fullwidth_full_stop",
+      "note": "The full-width and look-alike section of PayloadsAllTheThings 'Directory Traversal' (%uff0e / %uff0f / %u2215): U+FF0F FULLWIDTH SOLIDUS, U+FF0E FULLWIDTH FULL STOP and U+2215 DIVISION SLASH are mapped to ASCII '/' and '.' by best-fit character mapping in some stacks. ACCEPTED (U+FF0E is EF BC 8E), a full-width '..' segment.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%EF%BC%8E%EF%BC%8E/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/%EF%BC%8E%EF%BC%8E/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_division_slash",
+      "note": "The full-width and look-alike section of PayloadsAllTheThings 'Directory Traversal' (%uff0e / %uff0f / %u2215): U+FF0F FULLWIDTH SOLIDUS, U+FF0E FULLWIDTH FULL STOP and U+2215 DIVISION SLASH are mapped to ASCII '/' and '.' by best-fit character mapping in some stacks. ACCEPTED (U+2215 is E2 88 95).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%E2%88%95b"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a%E2%88%95b"
+        }
+      }
+    },
+    {
+      "name": "attack_fullwidth_solidus_lowercase",
+      "note": "The full-width and look-alike section of PayloadsAllTheThings 'Directory Traversal' (%uff0e / %uff0f / %u2215): U+FF0F FULLWIDTH SOLIDUS, U+FF0E FULLWIDTH FULL STOP and U+2215 DIVISION SLASH are mapped to ASCII '/' and '.' by best-fit character mapping in some stacks. The same bytes in lowercase hex deny, so the two spellings can never both be targets.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%ef%bc%8fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_fullwidth_solidus_raw",
+      "note": "The full-width and look-alike section of PayloadsAllTheThings 'Directory Traversal' (%uff0e / %uff0f / %u2215): U+FF0F FULLWIDTH SOLIDUS, U+FF0E FULLWIDTH FULL STOP and U+2215 DIVISION SLASH are mapped to ASCII '/' and '.' by best-fit character mapping in some stacks. The same character sent raw rather than percent-encoded: a non-ASCII byte in a path denies.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a\uff0fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_unicode_u_escape_solidus",
+      "note": "The full-width and look-alike section of PayloadsAllTheThings 'Directory Traversal' (%uff0e / %uff0f / %u2215): U+FF0F FULLWIDTH SOLIDUS, U+FF0E FULLWIDTH FULL STOP and U+2215 DIVISION SLASH are mapped to ASCII '/' and '.' by best-fit character mapping in some stacks. The non-standard '%u2215' 16-bit escape form.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%u2215b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_nul_encoded_truncation",
+      "note": "Null-byte and control-character truncation, on every path-traversal payload list (PayloadsAllTheThings 'Directory Traversal', and Jetty CVE-2021-34429 for the '.%00' form). '%00' truncates the path for a C-level consumer and does not for a Java or Go one, so the two see different files.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin%00.png"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_nul_raw_truncation",
+      "note": "Null-byte and control-character truncation, on every path-traversal payload list (PayloadsAllTheThings 'Directory Traversal', and Jetty CVE-2021-34429 for the '.%00' form). The same byte sent raw.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin\u0000.png"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_del_control",
+      "note": "Null-byte and control-character truncation, on every path-traversal payload list (PayloadsAllTheThings 'Directory Traversal', and Jetty CVE-2021-34429 for the '.%00' form). An encoded DEL (0x7F).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin%7F"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_vertical_tab_encoded",
+      "note": "Null-byte and control-character truncation, on every path-traversal payload list (PayloadsAllTheThings 'Directory Traversal', and Jetty CVE-2021-34429 for the '.%00' form). An encoded vertical tab, which some servers strip as whitespace.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin%0B"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_tab_raw",
+      "note": "Null-byte and control-character truncation, on every path-traversal payload list (PayloadsAllTheThings 'Directory Traversal', and Jetty CVE-2021-34429 for the '.%00' form). A raw tab inside the target: some servers reject it, some treat it as the end of the target, some pass it through.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/ad\tmin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_crlf_raw_in_path",
+      "note": "CRLF / response-splitting injection, OWASP 'CRLF Injection' and the HTTP Garden's finding that origin servers disagree about stray CR and LF in a request (Kallus et al., 'The HTTP Garden', arXiv:2405.17737). A raw CRLF in the target.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin\r\nX-Injected: 1"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_crlf_encoded_in_path",
+      "note": "CRLF / response-splitting injection, OWASP 'CRLF Injection' and the HTTP Garden's finding that origin servers disagree about stray CR and LF in a request (Kallus et al., 'The HTTP Garden', arXiv:2405.17737). The encoded form, which a component that decodes before forwarding turns back into a real CRLF.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin%0D%0AX-Injected:%201"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_crlf_in_authority",
+      "note": "CRLF / response-splitting injection, OWASP 'CRLF Injection' and the HTTP Garden's finding that origin servers disagree about stray CR and LF in a request (Kallus et al., 'The HTTP Garden', arXiv:2405.17737). The same injection in the authority.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com\r\nX-Injected: 1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_crlf_in_method",
+      "note": "CRLF / response-splitting injection, OWASP 'CRLF Injection' and the HTTP Garden's finding that origin servers disagree about stray CR and LF in a request (Kallus et al., 'The HTTP Garden', arXiv:2405.17737). The same injection in the method.",
+      "request": {
+        "method": "GET\r\nX-Injected: 1",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "attack_lf_in_scheme",
+      "note": "CRLF / response-splitting injection, OWASP 'CRLF Injection' and the HTTP Garden's finding that origin servers disagree about stray CR and LF in a request (Kallus et al., 'The HTTP Garden', arXiv:2405.17737). A stray LF in the scheme.",
+      "request": {
+        "method": "GET",
+        "scheme": "https\n",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "unsupported_scheme"
+      }
+    },
+    {
+      "name": "attack_absolute_form_other_host",
+      "note": "RFC 9112 3.2's four request-target forms, and the HTTP Garden's observation that servers disagree about which forms they accept and how they rewrite them (Kallus et al., arXiv:2405.17737). Absolute-form carrying a second, different authority. An adapter must deny when two copies of the authority disagree; if one ever reaches the canonicalizer as a path, it denies here too.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "https://evil.com/admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_absolute_form_same_host",
+      "note": "RFC 9112 3.2's four request-target forms, and the HTTP Garden's observation that servers disagree about which forms they accept and how they rewrite them (Kallus et al., arXiv:2405.17737). Absolute-form naming the same host: still not a path.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "https://example.com/admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_authority_form_target",
+      "note": "RFC 9112 3.2's four request-target forms, and the HTTP Garden's observation that servers disagree about which forms they accept and how they rewrite them (Kallus et al., arXiv:2405.17737). Authority-form, which only CONNECT may use.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "evil.com:443"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_protocol_relative_target",
+      "note": "RFC 9112 3.2's four request-target forms, and the HTTP Garden's observation that servers disagree about which forms they accept and how they rewrite them (Kallus et al., arXiv:2405.17737). '//host/path' is read as a network-path reference by RFC 3986 and as a path by many servers.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "//evil.com/admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_backslash_authority_confusion",
+      "note": "RFC 9112 3.2's four request-target forms, and the HTTP Garden's observation that servers disagree about which forms they accept and how they rewrite them (Kallus et al., arXiv:2405.17737). '/\\evil.com/' is read as '//evil.com/' by browsers and the WHATWG URL Standard, and as a path by most servers.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/\\evil.com/admin"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_accepted_at_sign_in_path",
+      "note": "RFC 9112 3.2's four request-target forms, and the HTTP Garden's observation that servers disagree about which forms they accept and how they rewrite them (Kallus et al., arXiv:2405.17737). ACCEPTED: '@' is an ordinary path byte (RFC 3986 pchar), so this is one path under example.com and nothing else. It is here because the authority-confusion shape '/@host/' is a common payload; the userinfo rule denies '@' in the authority, which is where it would be dangerous.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/@evil.com/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/@evil.com/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_host_duplicate_joined_by_comma",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. Two Host headers joined the way a field list is joined: the front end reads the first, the back end the last.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com,evil.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_duplicate_joined_by_space",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. The same duplicate, joined by a space.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com evil.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_userinfo_prefix",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. 'a@b': everything before '@' is userinfo, so a parser that keeps it reads the host as evil.com and one that drops it reads example.com.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "evil.com@example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_userinfo_suffix",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. The same trick the other way round.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com@evil.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_tab_suffix",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. A trailing tab, which some servers strip and some keep.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com\t",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_leading_space",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. Leading whitespace.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": " example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_nul",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. A NUL in the host truncates it for a C-level resolver.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com\u0000.evil.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_encoded_dot",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. Percent-encoding in the authority: a component that decodes it sees example.com, one that does not sees a name with a literal '%'.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example%2Ecom",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_bracketed_name",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. Brackets around a name, which only an IPv6 literal may use.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[example.com]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_uppercase_punycode",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. Punycode written in uppercase. Folding it would be a merge, so it denies; the lowercase spelling is accepted (see attack_accepted_homoglyph_punycode).",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "XN--EXMPLE-4NF.COM",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_raw_homoglyph",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. A Cyrillic small letter a (U+0430) in place of the ASCII 'a'. Sent raw, it is non-ASCII and denies: an international name must arrive as punycode.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "ex\u0430mple.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_accepted_homoglyph_punycode",
+      "note": "Host-header attacks: PortSwigger 'HTTP Host header attacks' and OWASP 'Host Header Injection'. RFC 9112 3.3 makes the Host field value the target URI's authority, so anything ambiguous there denies. ACCEPTED: the punycode of the Cyrillic look-alike above. It is a different name from example.com and gets a different target, which is the right answer; punycode is the only spelling that reaches the wire.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "xn--exmple-4nf.com",
+        "path": "/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "xn--exmple-4nf.com",
+          "port": 443,
+          "path": "/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_host_octal_loopback",
+      "note": "SSRF host-encoding lists (PayloadsAllTheThings 'Server Side Request Forgery', and the WHATWG URL Standard's 'ends in a number' rule). inet_aton reads a leading-zero part as octal, so 0177.0.0.1 is 127.0.0.1 to a C resolver and a name to DNS.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "0177.0.0.1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_padded_dotted_quad",
+      "note": "SSRF host-encoding lists: zero-padded octets, read as octal by inet_aton.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "127.000.000.1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_name_ending_in_number",
+      "note": "WHATWG URL Standard 'ends in a number' checker: a name whose last label is all digits is parsed as an IPv4 address by browsers and as a name by DNS.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "evil.com.127.0.0.1",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_host_ipv6_uncompressed_mapped_ipv4",
+      "note": "RFC 5952 4: an IPv4-mapped address written the long way. Only the one RFC 5952 spelling is accepted.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[0:0:0:0:0:ffff:7f00:1]",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "attack_accepted_ipv6_mapped_loopback",
+      "note": "RFC 5952 4. ACCEPTED: this is the one canonical spelling of the IPv4-mapped loopback, so it is kept. The dotted spelling of the same address, [::ffff:127.0.0.1], denies (see host_ipv6_embedded_ipv4), which is a split, not a merge: one address has one accepted target and one rejected spelling.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::ffff:7f00:1]",
+        "path": "/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "[::ffff:7f00:1]",
+          "port": 443,
+          "path": "/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_port_plus_sign",
+      "note": "RFC 3986 3.2.3 and RFC 9110 4.2.3. A port a parser reads differently from the next parser is a different destination. A leading '+', which some integer parsers accept.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:+443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "attack_port_whitespace",
+      "note": "RFC 3986 3.2.3 and RFC 9110 4.2.3. A port a parser reads differently from the next parser is a different destination. Whitespace around the port.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com: 8443",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "attack_port_fullwidth_digits",
+      "note": "RFC 3986 3.2.3 and RFC 9110 4.2.3. A port a parser reads differently from the next parser is a different destination. Full-width digits, which a best-fit mapping would turn into 8443.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:\uff18\uff14\uff14\uff13",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "attack_port_huge",
+      "note": "RFC 3986 3.2.3 and RFC 9110 4.2.3. A port a parser reads differently from the next parser is a different destination. A port past 16 bits, which wraps in a parser that truncates: 65536+8443 is 8443 modulo 65536.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com:73979",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "attack_method_smuggled_request_line",
+      "note": "RFC 9110 9.1 (methods are case-sensitive) and 5.6.2 (a method is a token); the HTTP Garden reports origin servers that accept non-token bytes in the method (Kallus et al., arXiv:2405.17737). A whole request line handed over as the method by a confused adapter.",
+      "request": {
+        "method": "GET / HTTP/1.1",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "attack_method_nul",
+      "note": "RFC 9110 9.1 (methods are case-sensitive) and 5.6.2 (a method is a token); the HTTP Garden reports origin servers that accept non-token bytes in the method (Kallus et al., arXiv:2405.17737). A NUL after the method.",
+      "request": {
+        "method": "GET\u0000",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "attack_method_override_tunnel",
+      "note": "RFC 9110 9.1 (methods are case-sensitive) and 5.6.2 (a method is a token); the HTTP Garden reports origin servers that accept non-token bytes in the method (Kallus et al., arXiv:2405.17737). A second method smuggled after a separator, the shape of an X-HTTP-Method-Override tunnel.",
+      "request": {
+        "method": "GET\tDELETE",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "attack_accepted_trailing_dot_in_path",
+      "note": "IIS / Windows file-name handling, on every web-shell and source-disclosure payload list: Windows strips trailing dots and spaces from a name, NTFS exposes a file's default data stream as 'name::$DATA', and 8.3 short names (ADMIN~1) reach the same file as the long name. ACCEPTED: a trailing '.' inside a segment is an ordinary character (only a whole '.' segment denies). On Windows this reaches the same file as /admin.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin."
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin."
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_trailing_dots_in_path",
+      "note": "IIS / Windows file-name handling, on every web-shell and source-disclosure payload list: Windows strips trailing dots and spaces from a name, NTFS exposes a file's default data stream as 'name::$DATA', and 8.3 short names (ADMIN~1) reach the same file as the long name. ACCEPTED, same family, three dots.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin..."
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin..."
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_trailing_encoded_space",
+      "note": "IIS / Windows file-name handling, on every web-shell and source-disclosure payload list: Windows strips trailing dots and spaces from a name, NTFS exposes a file's default data stream as 'name::$DATA', and 8.3 short names (ADMIN~1) reach the same file as the long name. ACCEPTED: an encoded trailing space, which Windows strips.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin%20"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin%20"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_ntfs_data_stream",
+      "note": "IIS / Windows file-name handling, on every web-shell and source-disclosure payload list: Windows strips trailing dots and spaces from a name, NTFS exposes a file's default data stream as 'name::$DATA', and 8.3 short names (ADMIN~1) reach the same file as the long name. ACCEPTED: ':' and '$' are ordinary path bytes (RFC 3986 pchar), so the classic '::$DATA' source-disclosure suffix passes through unchanged.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/admin::$DATA"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/admin::$DATA"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_short_file_name",
+      "note": "IIS / Windows file-name handling, on every web-shell and source-disclosure payload list: Windows strips trailing dots and spaces from a name, NTFS exposes a file's default data stream as 'name::$DATA', and 8.3 short names (ADMIN~1) reach the same file as the long name. ACCEPTED: an 8.3 short name. Path case is kept exactly, so this is a different target from /administrator, which is the safe direction.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/ADMIN~1"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/ADMIN~1"
+        }
+      }
+    },
+    {
+      "name": "attack_traversal_at_the_path_limit",
+      "note": "A 4096-byte traversal payload, exactly at the path limit, so the dot-segment rule is what denies it. Its pair below is one repetition longer.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_traversal_over_the_path_limit",
+      "note": "The same payload one repetition longer (4099 bytes). It denies for the length, not for its dot segments: limits are checked before any field is read, so the intended reason cannot be pinned past the limit. The pair above pins it.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../../"
+      },
+      "expected": {
+        "denial": "request_too_long"
+      }
+    },
+    {
+      "name": "attack_accepted_ipv4_unspecified",
+      "note": "SSRF host lists (PayloadsAllTheThings 'Server Side Request Forgery', the 'localhost bypass' section): the unspecified address reaches a service bound to every interface, so it is a common stand-in for 127.0.0.1. ACCEPTED: 0.0.0.0 is a dotted quad, the one IPv4 spelling every parser reads the same way, so it is a perfectly canonical host and gets its own target. The canonicalizer decides spelling, never reachability; which hosts a deployment may talk to is the caveat set's job.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "0.0.0.0",
+        "path": "/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "0.0.0.0",
+          "port": 443,
+          "path": "/admin"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_ipv6_unspecified",
+      "note": "SSRF host lists (PayloadsAllTheThings 'Server Side Request Forgery', the 'localhost bypass' section): the unspecified address reaches a service bound to every interface, so it is a common stand-in for 127.0.0.1. ACCEPTED: '::' is the RFC 5952 spelling of the IPv6 unspecified address, so it is kept. Same judgement as the case above.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::]",
+        "path": "/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "[::]",
+          "port": 443,
+          "path": "/admin"
         }
       }
     }
