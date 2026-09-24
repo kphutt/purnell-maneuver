@@ -414,6 +414,10 @@ fn drop_query(path_and_query: &[u8]) -> Result<&[u8], Denial> {
 /// - An encoded letter, digit or `- . _ ~` is denied. RFC 3986 says it means the same
 ///   as the plain byte, but a server that routes on the raw path sees something else.
 ///   (`%2E` is in this group, which also closes encoded dot segments.)
+/// - The bytes the path stands for, once every `%XX` is read as the byte it names,
+///   must be well-formed UTF-8 ([`Utf8Decoder`]). An ill-formed sequence has no one
+///   meaning, and real servers have decoded overlong forms back into `.`, `/` and
+///   `\`, so it is denied rather than passed along.
 /// - No `.` or `..` segment, and no empty segment (`//`). A trailing `/` is allowed
 ///   and is significant: `/a` and `/a/` are different targets.
 ///
@@ -423,21 +427,34 @@ fn canonical_path(path: &[u8]) -> Result<String, Denial> {
     if path.first() != Some(&b'/') {
         return Err(Denial::MalformedPath);
     }
+    let mut utf8 = Utf8Decoder::new();
     let mut bytes = path.iter().copied();
     while let Some(byte) = bytes.next() {
-        let allowed = if byte == b'%' {
+        // The byte this position stands for: the byte itself, or the one its `%XX`
+        // escape names. `None` when the position is denied on its own.
+        let stands_for = if byte == b'%' {
             let high = bytes.next().and_then(uppercase_hex_value);
             let low = bytes.next().and_then(uppercase_hex_value);
-            matches!(
-                (high, low),
-                (Some(high), Some(low)) if hex_byte(high, low).is_some_and(may_stay_encoded)
-            )
+            match (high, low) {
+                (Some(high), Some(low)) => {
+                    hex_byte(high, low).filter(|&byte| may_stay_encoded(byte))
+                }
+                _ => None,
+            }
+        } else if is_plain_path_byte(byte) {
+            Some(byte)
         } else {
-            is_plain_path_byte(byte)
+            None
         };
-        if !allowed {
+        // Every byte the path stands for goes through the decoder, so a sequence split
+        // across escapes and plain bytes alike is checked as one stream.
+        if !stands_for.is_some_and(|byte| utf8.push(byte)) {
             return Err(Denial::MalformedPath);
         }
+    }
+    // A sequence the path ends in the middle of is ill-formed too.
+    if !utf8.is_complete() {
+        return Err(Denial::MalformedPath);
     }
     let mut segments = path.split(|&byte| byte == b'/').skip(1).peekable();
     while let Some(segment) = segments.next() {
@@ -448,6 +465,85 @@ fn canonical_path(path: &[u8]) -> Result<String, Denial> {
         }
     }
     Ok(ascii_to_string(path))
+}
+
+/// The WHATWG Encoding standard's
+/// [UTF-8 decoder](https://encoding.spec.whatwg.org/#utf-8-decoder), as a state machine
+/// fed one byte at a time.
+///
+/// It is written as the standard's table rather than as a list of bytes to reject,
+/// because a list is always the payloads someone has already seen. `%C0%AF` (an
+/// overlong `/`) is only the best-known family: `%E0%80%AF` says the same thing in
+/// three bytes and `%F0%80%80%AF` in four, and both start with a lead byte a list
+/// built from the two-byte payloads lets through. The table rejects all of them, plus
+/// the surrogates (`%ED%A0%80`) and everything above U+10FFFF (`%F5%80%80%80`),
+/// without naming a single payload.
+///
+/// The code point itself is never built: the boundaries below already carry every
+/// rule, so tracking how many continuation bytes are still owed, and the range the
+/// next one must fall in, is the whole state.
+///
+/// Rejecting these is also what RFC 3629 requires: a decoder must not accept an
+/// overlong form, a surrogate, or a value above U+10FFFF
+/// ([RFC 3629 §3](https://www.rfc-editor.org/rfc/rfc3629#section-3)).
+struct Utf8Decoder {
+    /// How many continuation bytes the sequence in progress still owes. Zero means no
+    /// sequence is in progress.
+    bytes_needed: u8,
+    /// The range the next continuation byte must fall in. It is `0x80..=0xBF` except
+    /// right after a lead byte that narrows it: `0xE0` (which rules out three-byte
+    /// overlongs), `0xED` (surrogates), `0xF0` (four-byte overlongs) and `0xF4`
+    /// (above U+10FFFF).
+    lower_boundary: u8,
+    upper_boundary: u8,
+}
+
+impl Utf8Decoder {
+    fn new() -> Self {
+        Utf8Decoder {
+            bytes_needed: 0,
+            lower_boundary: 0x80,
+            upper_boundary: 0xBF,
+        }
+    }
+
+    /// Feeds one byte. `false` as soon as the stream cannot be well-formed UTF-8; the
+    /// decoder is not used again after that.
+    fn push(&mut self, byte: u8) -> bool {
+        if self.bytes_needed == 0 {
+            let (needed, lower, upper) = match byte {
+                0x00..=0x7F => return true,
+                0xC2..=0xDF => (1, 0x80, 0xBF),
+                0xE0 => (2, 0xA0, 0xBF),
+                0xE1..=0xEC | 0xEE..=0xEF => (2, 0x80, 0xBF),
+                0xED => (2, 0x80, 0x9F),
+                0xF0 => (3, 0x90, 0xBF),
+                0xF1..=0xF3 => (3, 0x80, 0xBF),
+                0xF4 => (3, 0x80, 0x8F),
+                // 0x80..=0xC1 (a stray continuation byte, or a two-byte overlong
+                // lead) and 0xF5..=0xFF (above U+10FFFF) are never a lead byte.
+                _ => return false,
+            };
+            self.bytes_needed = needed;
+            self.lower_boundary = lower;
+            self.upper_boundary = upper;
+            return true;
+        }
+        if byte < self.lower_boundary || byte > self.upper_boundary {
+            return false;
+        }
+        // Only the first continuation byte of a sequence can be narrowed; the rest of
+        // them take the plain range back.
+        self.lower_boundary = 0x80;
+        self.upper_boundary = 0xBF;
+        self.bytes_needed = self.bytes_needed.saturating_sub(1);
+        true
+    }
+
+    /// Whether no sequence is half-finished, so the stream may end here.
+    fn is_complete(&self) -> bool {
+        self.bytes_needed == 0
+    }
 }
 
 /// RFC 3986 §2.3 unreserved characters.
@@ -1140,7 +1236,14 @@ mod tests {
 
     #[test]
     fn uppercase_percent_hex_is_kept_exactly() {
-        for path in ["/caf%C3%A9", "/a%2Ab", "/%E2%82%AC", "/%AB%AB", "/%3A%3C"] {
+        // Every escape here decodes to well-formed UTF-8.
+        for path in [
+            "/caf%C3%A9",
+            "/a%2Ab",
+            "/%E2%82%AC",
+            "/%C2%AB%C2%BB",
+            "/%3A%3C",
+        ] {
             assert_eq!(path_of(path), Ok(path.to_string()), "{path:?}");
         }
     }
@@ -1174,10 +1277,86 @@ mod tests {
 
     #[test]
     fn encoded_reserved_and_other_bytes_stay_encoded() {
+        // Non-ASCII bytes appear here in their well-formed UTF-8 spelling.
         for path in [
-            "/%20", "/%21", "/%3A", "/%3F", "/%23", "/%40", "/%2C", "/%7B", "/%80", "/%FF", "/%22",
+            "/%20", "/%21", "/%3A", "/%3F", "/%23", "/%40", "/%2C", "/%7B", "/%C2%80", "/%C3%BF",
+            "/%22",
         ] {
             assert_eq!(path_of(path), Ok(path.to_string()), "{path:?}");
+        }
+    }
+
+    // --- the path decodes to well-formed UTF-8 (WHATWG Encoding, RFC 3629) ---------
+
+    #[test]
+    fn well_formed_utf8_of_every_length_is_accepted() {
+        // One byte per length, plus the smallest and the largest code point each
+        // length can carry, so the rule cannot be satisfied by denying all non-ASCII.
+        for path in [
+            "/caf%C3%A9",           // U+00E9, two bytes
+            "/%C2%80",              // U+0080, the smallest two-byte code point
+            "/%DF%BF",              // U+07FF, the largest
+            "/%E0%A0%80",           // U+0800, the smallest three-byte code point
+            "/%EF%BF%BF",           // U+FFFF, the largest
+            "/%ED%9F%BF",           // U+D7FF, right below the surrogates
+            "/%EE%80%80",           // U+E000, right above them
+            "/%F0%90%80%80",        // U+10000, the smallest four-byte code point
+            "/%F1%80%80%80",        // U+40000, a lead byte with no narrowed boundary
+            "/%F3%BF%BF%BF",        // U+FFFFF, the last one before 0xF4 narrows it
+            "/%F4%8F%BF%BF",        // U+10FFFF, the largest code point there is
+            "/a%C3%A9b%E2%82%AC/c", // several sequences and plain bytes in one path
+        ] {
+            assert_eq!(path_of(path), Ok(path.to_string()), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn overlong_encodings_are_denied_at_every_length() {
+        // The whole reason the rule is the WHATWG decoder's table and not a list of
+        // bytes: the published payloads are all two-byte (`%C0%AF` is IIS's overlong
+        // `/`), and a list built from them lets the three- and four-byte forms of the
+        // same character straight through. Each pair below is the same code point
+        // written overlong and, for the accepted comparison, written the short way.
+        for path in [
+            "/a/..%C0%AF../b",       // overlong '/', two bytes (CVE-2000-0884)
+            "/a/..%E0%80%AF../b",    // the same '/', three bytes
+            "/a/..%F0%80%80%AF../b", // and four
+            "/%C0%AE%C0%AE/admin",   // overlong '..'
+            "/admin%C0%80",          // overlong NUL
+            "/a/..%C1%9C../admin",   // overlong '\'
+            "/%E0%9F%BF",            // U+07FF written in three bytes instead of two
+            "/%F0%8F%BF%BF",         // U+FFFF written in four bytes instead of three
+        ] {
+            assert_eq!(path_of(path), Err(Denial::MalformedPath), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn surrogates_and_code_points_above_the_maximum_are_denied() {
+        for path in [
+            "/a%ED%A0%80b",    // U+D800, a lone high surrogate
+            "/a%ED%BF%BFb",    // U+DFFF, the last surrogate
+            "/a%F4%90%80%80b", // U+110000, one past the largest code point
+            "/a%F5%80%80%80b", // a lead byte no code point can use
+            "/a%FF%FEb",       // a UTF-16 byte order mark, decoded as UTF-8
+        ] {
+            assert_eq!(path_of(path), Err(Denial::MalformedPath), "{path:?}");
+        }
+    }
+
+    #[test]
+    fn a_sequence_the_path_does_not_finish_is_denied() {
+        for path in [
+            "/a%C3",       // a two-byte sequence, one byte short, at the end
+            "/a%E2%82",    // a three-byte sequence, one byte short
+            "/a%F0%9F%92", // a four-byte sequence, one byte short
+            "/a%C3b",      // a plain byte where a continuation byte must be
+            "/a%C3/b",     // a '/' where a continuation byte must be
+            "/a%E2%82b",   // the same, one byte further in
+            "/a%80b",      // a continuation byte with no lead byte
+            "/a%BFb",
+        ] {
+            assert_eq!(path_of(path), Err(Denial::MalformedPath), "{path:?}");
         }
     }
 

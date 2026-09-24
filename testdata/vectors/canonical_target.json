@@ -2335,8 +2335,8 @@
       }
     },
     {
-      "name": "attack_accepted_overlong_slash_uppercase",
-      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED, kept encoded byte for byte. Nothing decodes it here, so the target is this exact spelling and no other request shares it; but a back end that decodes overlong UTF-8 would read this target as '/scripts/../../winnt/...'.",
+      "name": "attack_overlong_slash_uppercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. DENIED since the path's decoded bytes must be well-formed UTF-8: 0xC0 can never start a sequence, so the overlong '/' is rejected whatever its hex case.",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -2344,13 +2344,7 @@
         "path": "/scripts/..%C0%AF../winnt/system32/cmd.exe"
       },
       "expected": {
-        "target": {
-          "method": "GET",
-          "scheme": "https",
-          "host": "example.com",
-          "port": 443,
-          "path": "/scripts/..%C0%AF../winnt/system32/cmd.exe"
-        }
+        "denial": "malformed_path"
       }
     },
     {
@@ -2367,8 +2361,8 @@
       }
     },
     {
-      "name": "attack_accepted_overlong_dot_uppercase",
-      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED: the segment is four percent-escapes, not '..', so the dot segment rule never sees it. A decoder that accepts overlong UTF-8 reads this target as '/../admin'.",
+      "name": "attack_overlong_dot_uppercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. DENIED: an overlong '..' segment. The dot-segment rule never sees it (the segment is four percent-escapes, not '..'), but the UTF-8 rule rejects every 0xC0 lead byte.",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -2376,18 +2370,12 @@
         "path": "/%C0%AE%C0%AE/admin"
       },
       "expected": {
-        "target": {
-          "method": "GET",
-          "scheme": "https",
-          "host": "example.com",
-          "port": 443,
-          "path": "/%C0%AE%C0%AE/admin"
-        }
+        "denial": "malformed_path"
       }
     },
     {
-      "name": "attack_accepted_overlong_backslash_uppercase",
-      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED: %C1%9C is an overlong '\\', which a server reading '\\' as a separator would resolve.",
+      "name": "attack_overlong_backslash_uppercase",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. DENIED: %C1%9C is an overlong '\\', which a server reading '\\' as a separator would resolve. 0xC1 is the other lead byte no well-formed sequence can start with.",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -2395,18 +2383,12 @@
         "path": "/a/..%C1%9C../admin"
       },
       "expected": {
-        "target": {
-          "method": "GET",
-          "scheme": "https",
-          "host": "example.com",
-          "port": 443,
-          "path": "/a/..%C1%9C../admin"
-        }
+        "denial": "malformed_path"
       }
     },
     {
-      "name": "attack_accepted_overlong_nul",
-      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. ACCEPTED: %C0%80 is an overlong NUL. A plain %00 denies (an encoded control byte); this spelling of the same byte does not.",
+      "name": "attack_overlong_nul",
+      "note": "IIS MS00-078 / CVE-2000-0884, the 'Unicode' directory traversal, and the overlong-UTF-8 section of PayloadsAllTheThings 'Directory Traversal'. %C0%AF is an overlong encoding of '/', %C0%AE of '.', %C1%9C of '\\' and %C0%80 of NUL; a decoder that does not reject overlong forms turns them back into those ASCII bytes. DENIED: %C0%80 is an overlong NUL. A plain %00 denies as an encoded control byte, and this spelling of the same byte now denies too.",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -2414,12 +2396,109 @@
         "path": "/admin%C0%80"
       },
       "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_overlong_slash_three_byte",
+      "note": "The rule is the WHATWG Encoding standard's UTF-8 decoder (https://encoding.spec.whatwg.org/#utf-8-decoder), not a list of bad bytes, because a list is only ever the payloads someone has already seen. The same overlong '/' as the %C0%AF payload, written in three bytes. Its lead byte 0xE0 is a perfectly ordinary one, so a rule that just banned 0xC0 and 0xC1 would let this through; the decoder denies it because 0xE0 requires its first continuation byte to be at least 0xA0.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/..%E0%80%AF../b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_overlong_slash_four_byte",
+      "note": "The rule is the WHATWG Encoding standard's UTF-8 decoder (https://encoding.spec.whatwg.org/#utf-8-decoder), not a list of bad bytes, because a list is only ever the payloads someone has already seen. The same overlong '/' again, in four bytes. Lead byte 0xF0 is ordinary too; the decoder denies it because 0xF0 requires its first continuation byte to be at least 0x90.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a/..%F0%80%80%AF../b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_lone_surrogate",
+      "note": "The rule is the WHATWG Encoding standard's UTF-8 decoder (https://encoding.spec.whatwg.org/#utf-8-decoder), not a list of bad bytes, because a list is only ever the payloads someone has already seen. U+D800, a lone high surrogate. UTF-8 cannot carry surrogates at all (RFC 3629 section 3), and a decoder that emits one hands the layers above it a string that can be re-encoded several ways. The decoder denies it because 0xED caps its first continuation byte at 0x9F.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%ED%A0%80b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_lead_byte_above_the_last_code_point",
+      "note": "The rule is the WHATWG Encoding standard's UTF-8 decoder (https://encoding.spec.whatwg.org/#utf-8-decoder), not a list of bad bytes, because a list is only ever the payloads someone has already seen. 0xF5 and above could only encode a code point past U+10FFFF, which does not exist, so no well-formed sequence starts with one.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%F5%80%80%80b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_truncated_utf8_sequence",
+      "note": "The rule is the WHATWG Encoding standard's UTF-8 decoder (https://encoding.spec.whatwg.org/#utf-8-decoder), not a list of bad bytes, because a list is only ever the payloads someone has already seen. A three-byte sequence the path ends one byte into. A decoder that ignores the end of its input may pad or drop the missing byte, and two decoders that guess differently read one path as two. A half-finished sequence at the end of the path is denied.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%E2%82"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "attack_accepted_well_formed_non_ascii",
+      "note": "Not an attack: the floor the rule above must not cross. 'ete' with two e-acutes, properly encoded, is ACCEPTED and kept byte for byte. Without a case like this the UTF-8 rule could be satisfied by denying every non-ASCII path, which would be a different and much blunter rule.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/%C3%A9t%C3%A9"
+      },
+      "expected": {
         "target": {
           "method": "GET",
           "scheme": "https",
           "host": "example.com",
           "port": 443,
-          "path": "/admin%C0%80"
+          "path": "/%C3%A9t%C3%A9"
+        }
+      }
+    },
+    {
+      "name": "attack_accepted_well_formed_four_byte",
+      "note": "Not an attack: the same floor for a four-byte sequence (U+1F512, a padlock). ACCEPTED. It shares its lead byte 0xF0 with attack_overlong_slash_four_byte and differs only in the continuation bytes, which is exactly what the decoder's boundaries look at.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a%F0%9F%94%92b"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/a%F0%9F%94%92b"
         }
       }
     },
