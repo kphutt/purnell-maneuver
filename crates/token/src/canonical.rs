@@ -620,6 +620,12 @@ fn ascii_to_string(ascii: &[u8]) -> String {
     ascii.iter().map(|&byte| char::from(byte)).collect()
 }
 
+/// Kani proof harnesses for the rules in this file. Behind `#[cfg(kani)]`, which only
+/// Kani's own compiler driver sets, so an ordinary build never sees them.
+#[cfg(kani)]
+#[path = "canonical_kani.rs"]
+mod kani_proofs;
+
 #[cfg(test)]
 mod tests {
     use super::*;

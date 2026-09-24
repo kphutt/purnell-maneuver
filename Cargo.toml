@@ -13,6 +13,12 @@ publish = false
 # top, so these deny levels bite outside tests only, as the rules require.
 [workspace.lints.rust]
 unsafe_code = "forbid"
+# `token`'s Kani proof harnesses (crates/token/src/canonical_kani.rs) live behind
+# `#[cfg(kani)]`, a cfg only Kani's own compiler driver sets — never `cargo build`,
+# `cargo test` or `cargo clippy`. Without this, `-D warnings` turns that cfg into a
+# hard error under `--all-targets`, since rustc does not otherwise know `kani` is a
+# real, if never-locally-set, cfg name.
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(kani)"] }
 
 [workspace.lints.clippy]
 unwrap_used = "deny"
