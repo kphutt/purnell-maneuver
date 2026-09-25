@@ -43,7 +43,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use crate::target::{HttpTarget, RequestFacts, Target};
+use crate::target::{HttpTarget, McpTarget, RequestFacts, Target};
 use crate::Denial;
 
 /// The longest method accepted, in bytes. The longest registered HTTP method
@@ -68,6 +68,17 @@ const MAX_HOST_BYTES: usize = 253;
 /// The longest path accepted, in bytes, counting the query too, since the field holds
 /// both as the server received them.
 pub const MAX_PATH_BYTES: usize = 4096;
+
+/// The longest `Mcp-Method` accepted, in bytes. MCP method names are short and fixed by
+/// the protocol (`tools/call`, `resources/read`, `prompts/get`); 64 bytes is room for
+/// every one of them and for a namespaced extension, and nothing longer is read.
+pub const MAX_MCP_METHOD_BYTES: usize = 64;
+
+/// The longest `Mcp-Name` accepted, in bytes, counting a base64 wrapper when there is
+/// one. A tool name is only `SHOULD`-limited to 128 characters, but the same header
+/// carries a `resources/read` URI, which is a full URI, so the limit is the path's
+/// order of magnitude rather than the tool name's.
+pub const MAX_MCP_NAME_BYTES: usize = 1024;
 
 /// The schemes the canonicalizer supports.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -99,16 +110,26 @@ impl Scheme {
 /// request observed while learning and the same request checked later always get the
 /// same target.
 ///
-/// Every field is checked against its byte limit before any field is read. The fields
-/// are then read in order (method, scheme, authority, path), and the first bad one
-/// names the denial. No rule reads a fact from outside the request; the only rule that
-/// reads a second field is the port rule, which reads the scheme to fill in a missing
-/// port and to deny that default written out.
+/// Every field is checked against its byte limit before any field is read, the MCP
+/// fields included when the request carries them. The fields are then read in order
+/// (method, scheme, authority, path, then the MCP pair), and the first bad one names
+/// the denial. No rule reads a fact from outside the request; the only rule that reads
+/// a second field is the port rule, which reads the scheme to fill in a missing port
+/// and to deny that default written out.
+///
+/// Whether the request carries MCP facts decides the target's **kind**, and nothing
+/// else does: `None` gives a [`Target::Http`], `Some` gives a [`Target::Mcp`]. It is
+/// not a mode — the same bytes always give the same target, and no token or
+/// configuration is consulted.
 pub fn canonicalize(request: &RequestFacts) -> Result<Target, Denial> {
+    let mcp_over_limit = request.mcp.is_some_and(|mcp| {
+        mcp.method.len() > MAX_MCP_METHOD_BYTES || mcp.name.len() > MAX_MCP_NAME_BYTES
+    });
     if request.method.len() > MAX_METHOD_BYTES
         || request.scheme.len() > MAX_SCHEME_BYTES
         || request.authority.len() > MAX_AUTHORITY_BYTES
         || request.path.len() > MAX_PATH_BYTES
+        || mcp_over_limit
     {
         return Err(Denial::RequestTooLong);
     }
@@ -122,10 +143,18 @@ pub fn canonicalize(request: &RequestFacts) -> Result<Target, Denial> {
         None => scheme.default_port(),
     };
     let path = canonical_path(drop_query(request.path)?)?;
+    let http = HttpTarget::new(method, scheme, host, port, path);
 
-    Ok(Target::Http(HttpTarget::new(
-        method, scheme, host, port, path,
-    )))
+    // The MCP fields are the last thing read, and whether they are there at all is what
+    // decides the target's kind. One request still gives exactly one target.
+    match request.mcp {
+        None => Ok(Target::Http(http)),
+        Some(mcp) => {
+            let mcp_method = canonical_mcp_value(mcp.method).ok_or(Denial::MalformedMcpMethod)?;
+            let mcp_name = canonical_mcp_value(mcp.name).ok_or(Denial::MalformedMcpName)?;
+            Ok(Target::Mcp(McpTarget::new(http, mcp_method, mcp_name)))
+        }
+    }
 }
 
 /// Writes an authority back the one way [`canonicalize`] accepts it: the host, plus
@@ -579,6 +608,139 @@ impl Utf8Decoder {
     }
 }
 
+/// The bytes an MCP header value carries when it is base64-wrapped, before and after
+/// the payload. MCP makes these markers case-sensitive and lowercase, so `=?BASE64?`
+/// never opens a wrapper. A plain value of that shape ending in `?=` is still denied,
+/// because it reads as one ([`reads_as_a_wrapper`]).
+const SENTINEL_OPEN: &[u8] = b"=?base64?";
+const SENTINEL_CLOSE: &[u8] = b"?=";
+
+/// An `Mcp-Method` or `Mcp-Name` value: kept exactly, never rewritten, and accepted
+/// only in the one spelling MCP leaves open for it.
+///
+/// Returns the accepted bytes unchanged, or `None` to deny. Nothing is folded and
+/// nothing is decoded *into* the target — the decoding below is how the rules are
+/// applied, not a rewrite.
+///
+/// **Why the sentinel has to be decoded before anything else is decided.** MCP lets a
+/// value travel base64-wrapped (`=?base64?Z2V0X3dlYXRoZXI=?=`) as well as plain
+/// (`get_weather`), and requires a server to decode a wrapped value before comparing it
+/// with the body. Comparing the raw bytes would therefore give one destination two
+/// targets, which is the merge this canonicalizer exists to prevent — and worse, it
+/// would let a value that breaks the rules below arrive wrapped and be stored as if it
+/// were an ordinary opaque name. So the value is decoded, the rules are applied to what
+/// it decodes to, and then the wrapping itself is checked:
+///
+/// - **The body of the value.** Non-empty, and every byte is visible ASCII
+///   (`0x21..=0x7E`) other than `;`. That denies a space, a control byte, a leading or
+///   trailing space and every non-ASCII byte in one rule, and it is what keeps the
+///   token's two separators out of a caveat body: `format.rs` promises `;` and space
+///   never appear in a canonical field, and this is the field that would otherwise
+///   break that promise. **This is a tightening and it is a limit for now, not a
+///   settled answer**: a conforming `Mcp-Name` may carry a space, and a `resources/read`
+///   name is a full URI where `;` is legal, so this rule denies traffic MCP permits.
+///   Percent-encoding the value in the caveat body instead is a later decision, and it
+///   would be a new caveat kind rather than an edit to this one.
+/// - **Exactly one spelling per value.** MCP requires a client to wrap a value it
+///   cannot represent as plain ASCII, and a value that itself reads as a wrapper
+///   (`=?…?=`) can only ever arrive wrapped, because the markers would otherwise be
+///   read as the wrapper they look like. So a value that reads as a wrapper must arrive
+///   wrapped, and every other value must arrive plain: wrapping something that did not
+///   need it is denied rather than folded. One value, one spelling, so comparing the
+///   bytes that arrived *is* comparing the values.
+/// - **Canonical base64 only**, when there is a wrapper: the standard alphabet
+///   (`A-Za-z0-9+/`), padded to a multiple of four, `=` only at the very end, and the
+///   bits the padding drops all zero. Base64 otherwise spells one value several ways
+///   (base64url, unpadded, spare trailing bits), and several spellings of one value is
+///   the same merge again. These checks together are the "re-encoding must give back
+///   exactly what arrived" property, written out rather than round-tripped.
+fn canonical_mcp_value(raw: &[u8]) -> Option<String> {
+    let payload = raw
+        .strip_prefix(SENTINEL_OPEN)
+        .and_then(|rest| rest.strip_suffix(SENTINEL_CLOSE));
+    let value = match payload {
+        Some(payload) => base64_decode(payload)?,
+        None => raw.to_vec(),
+    };
+    let body_is_canonical = !value.is_empty()
+        && value
+            .iter()
+            .all(|&byte| matches!(byte, 0x21..=0x7E) && byte != b';');
+    if !body_is_canonical || reads_as_a_wrapper(&value) != payload.is_some() {
+        return None;
+    }
+    Some(ascii_to_string(raw))
+}
+
+/// Whether a value would be read as a base64 wrapper if it were sent plain, so MCP
+/// leaves it no plain spelling. Four bytes is the shortest value whose opening and
+/// closing markers do not overlap.
+fn reads_as_a_wrapper(value: &[u8]) -> bool {
+    value.len() >= 4 && value.starts_with(b"=?") && value.ends_with(SENTINEL_CLOSE)
+}
+
+/// Reads canonical padded standard-alphabet base64, or `None`.
+///
+/// Deliberately strict, because base64 is a place one value has several spellings and
+/// every extra spelling is a second name for one destination: the length must be a
+/// multiple of four, `=` may appear only at the end of the last group and only once or
+/// twice, and the bits the padding drops must be zero. `-` and `_` (base64url) are not
+/// in the alphabet and deny.
+fn base64_decode(text: &[u8]) -> Option<Vec<u8>> {
+    if text.is_empty() || !text.len().is_multiple_of(4) {
+        return None;
+    }
+    let groups = text.as_chunks::<4>().0;
+    let last_group = groups.len().checked_sub(1)?;
+    let mut decoded = Vec::new();
+    for (index, group) in groups.iter().enumerate() {
+        let mut values = [0u8; 4];
+        let mut padding = 0usize;
+        for (slot, &byte) in values.iter_mut().zip(group) {
+            if byte == b'=' {
+                if index != last_group {
+                    return None;
+                }
+                padding = padding.checked_add(1)?;
+            } else if padding == 0 {
+                *slot = base64_value(byte)?;
+            } else {
+                // `=` may only trail: `A=B=` is not base64.
+                return None;
+            }
+        }
+        if padding > 2 {
+            return None;
+        }
+        // Four 6-bit values are 24 bits, so they are the low three bytes of a u32.
+        let packed = values.iter().try_fold(0u32, |sum, &value| {
+            sum.checked_mul(64)?.checked_add(u32::from(value))
+        })?;
+        let bytes = packed.to_be_bytes();
+        let triple = bytes.get(1..)?;
+        let kept = 3usize.checked_sub(padding)?;
+        // The bits the padding drops must be zero, or one value has two spellings.
+        if triple.get(kept..)?.iter().any(|&byte| byte != 0) {
+            return None;
+        }
+        decoded.extend_from_slice(triple.get(..kept)?);
+    }
+    Some(decoded)
+}
+
+/// A standard-alphabet base64 digit's value (RFC 4648 §4). `=` is padding and is
+/// handled by the caller, not here.
+fn base64_value(byte: u8) -> Option<u8> {
+    match byte {
+        b'A'..=b'Z' => byte.checked_sub(b'A'),
+        b'a'..=b'z' => byte.checked_sub(b'a')?.checked_add(26),
+        b'0'..=b'9' => byte.checked_sub(b'0')?.checked_add(52),
+        b'+' => Some(62),
+        b'/' => Some(63),
+        _ => None,
+    }
+}
+
 /// RFC 3986 §2.3 unreserved characters.
 fn is_unreserved(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
@@ -668,7 +830,30 @@ mod tests {
     fn http(request: &RequestFacts) -> Result<HttpTarget, Denial> {
         canonicalize(request).map(|target| match target {
             Target::Http(http) => http,
+            Target::Mcp(mcp) => mcp.http().clone(),
         })
+    }
+
+    /// The MCP target of a request, or its denial. Panics if the request had no MCP
+    /// facts, since then the test asked for the wrong kind.
+    fn mcp(request: &RequestFacts) -> Result<McpTarget, Denial> {
+        canonicalize(request).map(|target| match target {
+            Target::Mcp(mcp) => mcp,
+            Target::Http(_) => panic!("the request carries MCP facts"),
+        })
+    }
+
+    /// The canonical `Mcp-Name` of an otherwise ordinary MCP call, or its denial.
+    fn mcp_name_of(name: &str) -> Result<String, Denial> {
+        mcp(&crate::target::test_support::mcp_facts(
+            "POST",
+            "https",
+            "mcp.example.com",
+            "/mcp",
+            "tools/call",
+            name,
+        ))
+        .map(|target| target.name().to_string())
     }
 
     /// The raw request facts of a request written as text.
@@ -1302,6 +1487,7 @@ mod tests {
             scheme: b"https",
             authority: b"example.com",
             path: b"/a\xffb",
+            mcp: None,
         };
         assert_eq!(canonicalize(&raw), Err(Denial::MalformedPath));
     }
@@ -1514,6 +1700,7 @@ mod tests {
             scheme: b"https",
             authority: b"example.com",
             path,
+            mcp: None,
         })
         .is_ok()
     }
@@ -1525,6 +1712,7 @@ mod tests {
             scheme: b"https",
             authority: b"example.com",
             path: b"/a",
+            mcp: None,
         })
         .is_ok()
     }
@@ -1536,6 +1724,7 @@ mod tests {
             scheme: b"https",
             authority,
             path: b"/a",
+            mcp: None,
         })
         .is_ok()
     }
@@ -1592,18 +1781,21 @@ mod tests {
                     scheme: b"https",
                     authority: b"example.com",
                     path: b"/a",
+                    mcp: None,
                 },
                 RequestFacts {
                     method: b"GET",
                     scheme: b"https",
                     authority: &authority,
                     path: b"/a",
+                    mcp: None,
                 },
                 RequestFacts {
                     method: b"GET",
                     scheme: b"https",
                     authority: b"example.com",
                     path: &path,
+                    mcp: None,
                 },
             ];
             for raw in requests {
@@ -1616,6 +1808,212 @@ mod tests {
                     }
                 }
             }
+        }
+    }
+
+    // --- the MCP fields ----------------------------------------------------------
+
+    /// A plain value is kept byte for byte, like every other field here.
+    #[test]
+    fn a_plain_mcp_value_is_kept_exactly() {
+        for name in [
+            "get_document",
+            "delete_document",
+            "A",
+            "a.b-c_d",
+            "file:///projects/myapp/config.json",
+            "=?base64",
+            "not-a-wrapper?=",
+            "=?x?",
+        ] {
+            assert_eq!(mcp_name_of(name), Ok(name.to_string()), "{name:?}");
+        }
+        let target = mcp(&crate::target::test_support::mcp_facts(
+            "POST",
+            "https",
+            "mcp.example.com",
+            "/mcp",
+            "resources/read",
+            "file:///a",
+        ))
+        .unwrap();
+        assert_eq!(target.method(), "resources/read");
+        assert_eq!(target.name(), "file:///a");
+    }
+
+    /// The token's two separators can never reach a caveat body, so they are denied in
+    /// the one field that could otherwise carry them. This is a limit for now, not a
+    /// settled answer: MCP permits both.
+    #[test]
+    fn an_mcp_value_holding_a_separator_is_denied() {
+        for name in [
+            "get document",
+            " get_document",
+            "get_document ",
+            "get;document",
+        ] {
+            assert_eq!(mcp_name_of(name), Err(Denial::MalformedMcpName), "{name:?}");
+        }
+    }
+
+    /// Empty, control bytes, `DEL` and non-ASCII: one rule, `0x21..=0x7E`.
+    #[test]
+    fn an_mcp_value_that_is_not_visible_ascii_is_denied() {
+        assert_eq!(mcp_name_of(""), Err(Denial::MalformedMcpName));
+        assert_eq!(mcp_name_of("get\tname"), Err(Denial::MalformedMcpName));
+        assert_eq!(mcp_name_of("get\nname"), Err(Denial::MalformedMcpName));
+        assert_eq!(mcp_name_of("get\u{7f}name"), Err(Denial::MalformedMcpName));
+        assert_eq!(mcp_name_of("caf\u{e9}"), Err(Denial::MalformedMcpName));
+    }
+
+    /// Every byte value, in one pass: exactly the visible ASCII bytes other than `;`
+    /// are accepted, and nothing else is.
+    #[test]
+    fn an_mcp_value_holds_exactly_the_bytes_the_rule_names() {
+        for byte in 0u8..=255 {
+            let name = [b"get".as_slice(), &[byte]].concat();
+            let facts = RequestFacts {
+                mcp: Some(crate::target::McpFacts {
+                    method: b"tools/call",
+                    name: &name,
+                }),
+                ..crate::target::test_support::facts("POST", "https", "mcp.example.com", "/mcp")
+            };
+            let expected = matches!(byte, 0x21..=0x7E) && byte != b';';
+            assert_eq!(
+                canonicalize(&facts).is_ok(),
+                expected,
+                "byte {byte:#04x} in an Mcp-Name"
+            );
+        }
+    }
+
+    /// The rule that keeps one value from having two names: wrapping something that
+    /// did not have to be wrapped is denied, never folded onto the plain spelling.
+    #[test]
+    fn a_value_wrapped_when_it_did_not_need_to_be_is_denied() {
+        // "get_document" and "tools/call", each wrapped.
+        assert_eq!(
+            mcp_name_of("=?base64?Z2V0X2RvY3VtZW50?="),
+            Err(Denial::MalformedMcpName)
+        );
+        assert_eq!(
+            mcp_name_of("=?base64?dG9vbHMvY2FsbA==?="),
+            Err(Denial::MalformedMcpName)
+        );
+    }
+
+    /// The other half of the same rule: a value that would read as a wrapper has no
+    /// plain spelling, so it must arrive wrapped. The markers are case-sensitive, so
+    /// `=?BASE64?...?=` is an ordinary value that happens to look like one.
+    #[test]
+    fn a_value_that_reads_as_a_wrapper_must_arrive_wrapped() {
+        // "=?BASE64?Zm9v?=" sent plain: denied, because it reads as a wrapper.
+        assert_eq!(
+            mcp_name_of("=?BASE64?Zm9v?="),
+            Err(Denial::MalformedMcpName)
+        );
+        // The same value, wrapped the way MCP requires: accepted, and stored wrapped,
+        // because that is the one spelling it has.
+        let wrapped = "=?base64?PT9CQVNFNjQ/Wm05dj89?=";
+        assert_eq!(mcp_name_of(wrapped), Ok(wrapped.to_string()));
+        // A value too short to have two markers is not one, so it stays plain.
+        assert_eq!(mcp_name_of("=?="), Ok("=?=".to_string()));
+        assert_eq!(mcp_name_of("=?x?="), Err(Denial::MalformedMcpName));
+        assert_eq!(
+            mcp_name_of("=?base64?PT94Pz0=?="),
+            Ok("=?base64?PT94Pz0=?=".to_string())
+        );
+        assert_eq!(mcp_name_of("=?not-base64?="), Err(Denial::MalformedMcpName));
+        assert_eq!(
+            mcp_name_of("=?base64?PT9ub3QtYmFzZTY0Pz0=?="),
+            Ok("=?base64?PT9ub3QtYmFzZTY0Pz0=?=".to_string())
+        );
+    }
+
+    /// Why decode at all: the value rules are applied to what the wrapper
+    /// stands for, so a separator cannot be smuggled past them inside base64.
+    #[test]
+    fn a_wrapper_is_decoded_before_the_value_rules_are_applied() {
+        // "get document" and "get;document", wrapped.
+        assert_eq!(
+            mcp_name_of("=?base64?Z2V0IGRvY3VtZW50?="),
+            Err(Denial::MalformedMcpName)
+        );
+        assert_eq!(
+            mcp_name_of("=?base64?Z2V0O2RvY3VtZW50?="),
+            Err(Denial::MalformedMcpName)
+        );
+    }
+
+    /// Base64 spells one value several ways, and every extra spelling would be a second
+    /// name for one destination. Only the canonical spelling is read.
+    #[test]
+    fn only_canonical_base64_is_read() {
+        for payload in [
+            "PT9CQVNFNjQ_Wm05dj89",
+            "PT9CQVNFNjQ/Wm05dj89=",
+            "PT9CQVNFNjQ/Wm05dj8",
+            "PT9CQVNFNjQ/=m05dj89",
+            "====",
+            "QR==",
+            "",
+        ] {
+            let wrapped = alloc::format!("=?base64?{payload}?=");
+            assert_eq!(
+                mcp_name_of(&wrapped),
+                Err(Denial::MalformedMcpName),
+                "{wrapped:?}"
+            );
+        }
+        // "A" wrapped: canonical base64, but the value needs no wrapping, so it is the
+        // one-spelling rule that denies it, not the base64 rule.
+        assert_eq!(
+            mcp_name_of("=?base64?QQ==?="),
+            Err(Denial::MalformedMcpName)
+        );
+    }
+
+    /// Each MCP field names its own denial, and both are checked against their byte
+    /// limits before any field is read.
+    #[test]
+    fn each_mcp_field_is_named_and_bounded_on_its_own() {
+        let bad = |method: &str, name: &str| {
+            canonicalize(&crate::target::test_support::mcp_facts(
+                "POST",
+                "https",
+                "mcp.example.com",
+                "/mcp",
+                method,
+                name,
+            ))
+        };
+        assert_eq!(
+            bad("tools call", "get_document"),
+            Err(Denial::MalformedMcpMethod)
+        );
+        assert_eq!(
+            bad("tools/call", "get document"),
+            Err(Denial::MalformedMcpName)
+        );
+        // The method is read first, so it names the denial when both are bad.
+        assert_eq!(
+            bad("tools call", "get document"),
+            Err(Denial::MalformedMcpMethod)
+        );
+
+        // At the limit each field is read; one byte over, the length denial wins even
+        // though every other field is malformed too.
+        let at_method = "m".repeat(MAX_MCP_METHOD_BYTES);
+        let at_name = "n".repeat(MAX_MCP_NAME_BYTES);
+        assert!(bad(&at_method, &at_name).is_ok());
+        let over_method = "m".repeat(MAX_MCP_METHOD_BYTES.saturating_add(1));
+        let over_name = "n".repeat(MAX_MCP_NAME_BYTES.saturating_add(1));
+        for facts in [
+            crate::target::test_support::mcp_facts("!", "HTTPS", "X", "a", &over_method, "n"),
+            crate::target::test_support::mcp_facts("!", "HTTPS", "X", "a", "m", &over_name),
+        ] {
+            assert_eq!(canonicalize(&facts), Err(Denial::RequestTooLong));
         }
     }
 }

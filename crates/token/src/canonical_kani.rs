@@ -212,9 +212,14 @@ fn totality_any_bytes_give_a_bounded_target_or_a_named_denial() {
         scheme: any_bytes(&scheme),
         authority: any_bytes(&authority),
         path: any_bytes(&path),
+        mcp: None,
     };
 
     match canonicalize(&request) {
+        // The request above carries no MCP facts, so its target is an HTTP one. The
+        // other arm is unreachable and is written out rather than wildcarded, so that
+        // adding a kind makes this harness say something about it.
+        Ok(Target::Mcp(_)) => panic!("a request with no MCP facts gives an HTTP target"),
         Ok(Target::Http(target)) => {
             // Not vacuous: the solver must find real bytes that reach this arm.
             kani::cover!(true, "a request inside this bound is accepted");
@@ -272,6 +277,7 @@ fn idempotence_a_target_written_back_canonicalizes_to_itself() {
         scheme: any_bytes(&scheme),
         authority: any_bytes(&authority),
         path: any_bytes(&path),
+        mcp: None,
     };
 
     let Ok(target) = canonicalize(&request) else {
@@ -279,7 +285,9 @@ fn idempotence_a_target_written_back_canonicalizes_to_itself() {
     };
     // Not vacuous: without this, a bound that accepted nothing would still "pass".
     kani::cover!(true, "the proof reaches an accepted request");
-    let Target::Http(ref first) = target;
+    let Some(first) = target.as_http() else {
+        panic!("a request with no MCP facts gives an HTTP target");
+    };
 
     let written_method = String::from(first.method());
     let written_scheme = String::from(first.scheme());
@@ -290,6 +298,7 @@ fn idempotence_a_target_written_back_canonicalizes_to_itself() {
         scheme: written_scheme.as_bytes(),
         authority: written_authority.as_bytes(),
         path: written_path.as_bytes(),
+        mcp: None,
     };
 
     let Ok(Target::Http(second)) = canonicalize(&written) else {
@@ -348,6 +357,7 @@ fn no_merge_one_target_means_the_same_method_scheme_host_port_and_path() {
         scheme: any_bytes(&left_scheme),
         authority: any_bytes(&left_authority),
         path: any_bytes(&left_path),
+        mcp: None,
     };
 
     symbolic_request!(
@@ -365,6 +375,7 @@ fn no_merge_one_target_means_the_same_method_scheme_host_port_and_path() {
         scheme: any_bytes(&right_scheme),
         authority: any_bytes(&right_authority),
         path: any_bytes(&right_path),
+        mcp: None,
     };
 
     let (Ok(left_target), Ok(right_target)) = (canonicalize(&left), canonicalize(&right)) else {
@@ -412,6 +423,53 @@ fn no_merge_one_target_means_the_same_method_scheme_host_port_and_path() {
 // ===========================================================================
 // Group 2 — the rule layer, over whole domains
 // ===========================================================================
+
+/// **Every byte value, through the MCP value rule, in one proof.**
+///
+/// The `mcp` caveat kind's one new byte class. An `Mcp-Method` or `Mcp-Name` value may
+/// hold exactly the visible ASCII bytes other than `;`, and that single rule is what
+/// keeps the token's two separators out of a caveat body, keeps a control byte or a
+/// non-ASCII byte from reaching a token that has to be printable ASCII, and denies a
+/// leading or trailing space. A sampled test can only show the bytes somebody thought
+/// of; this covers all 256 at once.
+///
+/// It is stated over a one-byte value, which is the whole class: the rule reads each
+/// byte on its own, and the sentinel rules below it cannot fire on one byte (a value
+/// needs four to carry both markers).
+#[kani::proof]
+fn every_mcp_value_byte_is_classified_the_way_the_rule_says() {
+    let byte: u8 = kani::any();
+    let value = [byte];
+    let request = RequestFacts {
+        method: b"POST",
+        scheme: b"https",
+        authority: b"mcp.example.com",
+        path: b"/mcp",
+        mcp: Some(crate::target::McpFacts {
+            method: b"tools/call",
+            name: &value,
+        }),
+    };
+    let accepted = canonicalize(&request).is_ok();
+
+    assert!(
+        accepted == (matches!(byte, 0x21..=0x7E) && byte != b';'),
+        "an MCP value holds exactly the visible ASCII bytes other than ';'"
+    );
+    assert!(
+        !accepted || (byte != b' ' && byte != b';'),
+        "neither of the token's separators can reach a caveat body"
+    );
+    assert!(
+        !accepted || !byte.is_ascii_control(),
+        "a control byte is denied"
+    );
+    assert!(
+        accepted || byte != b'a',
+        "an ordinary name byte is accepted"
+    );
+    kani::cover!(accepted, "some byte is accepted");
+}
 
 /// **Every byte value, all 256 of them, through every byte rule at once.** This is not
 /// a bound: `u8` has 256 values and the proof covers all of them, so it is complete.

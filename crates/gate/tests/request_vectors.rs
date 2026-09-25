@@ -27,12 +27,18 @@
 
 use std::collections::HashMap;
 
-use gate::{check, observe, Denial, RequestFacts};
+use gate::{check, observe, Denial, McpFacts, RequestFacts};
 use tinyjson::JsonValue;
 
 type Object = HashMap<String, JsonValue>;
 
-/// Format 1: a request is method, scheme, authority and path, and nothing else.
+/// Format 1: a request is method, scheme, authority and path, plus an optional "mcp"
+/// object holding the two mirrored MCP header values. A request without "mcp" has an
+/// HTTP target; one with it has an MCP target, and its expected target then also
+/// carries "mcp_method" and "mcp_name". Both are fields a reader may not know, which
+/// the file's own rule says does not bump the format -- an adapter that ignores them
+/// simply fails the `mcp_*` cases, which is the right answer for an adapter that has
+/// not implemented the kind.
 const KNOWN_FORMAT: f64 = 1.0;
 
 const CANONICAL_JSON: &str = include_str!("../../../testdata/vectors/canonical_target.json");
@@ -91,17 +97,27 @@ struct RawRequest {
     scheme: Vec<u8>,
     authority: Vec<u8>,
     path: Vec<u8>,
+    /// The two mirrored MCP header values, when the case gives them.
+    mcp: Option<(Vec<u8>, Vec<u8>)>,
 }
 
 impl RawRequest {
     fn from_json(value: &JsonValue) -> RawRequest {
         let fields = object(value);
         let bytes = |key: &str| string(fields, key).as_bytes().to_vec();
+        let mcp = fields.get("mcp").map(|mcp| {
+            let mcp = object(mcp);
+            (
+                string(mcp, "method").as_bytes().to_vec(),
+                string(mcp, "name").as_bytes().to_vec(),
+            )
+        });
         RawRequest {
             method: bytes("method"),
             scheme: bytes("scheme"),
             authority: bytes("authority"),
             path: bytes("path"),
+            mcp,
         }
     }
 
@@ -111,6 +127,10 @@ impl RawRequest {
             scheme: &self.scheme,
             authority: &self.authority,
             path: &self.path,
+            mcp: self
+                .mcp
+                .as_ref()
+                .map(|(method, name)| McpFacts { method, name }),
         }
     }
 }
@@ -132,14 +152,29 @@ fn canonical_target_vectors_pass() {
         let matches = match (expected.get("target"), expected.get("denial"), &actual) {
             (Some(target), None, Ok(actual)) => {
                 let target = object(target);
-                let actual = actual
-                    .as_http()
-                    .unwrap_or_else(|| panic!("case {name:?}: not an HTTP target"));
+                // The kind is decided by the request, so the expected target is read
+                // the same way: with "mcp" it must be an MCP target, without it an
+                // HTTP one. A case can never pass by getting the kind wrong.
+                let (actual, mcp_matches) = match (&request.mcp, actual.as_mcp()) {
+                    (Some(_), Some(mcp)) => (
+                        mcp.http(),
+                        mcp.method() == string(target, "mcp_method")
+                            && mcp.name() == string(target, "mcp_name"),
+                    ),
+                    (None, None) => (
+                        actual
+                            .as_http()
+                            .unwrap_or_else(|| panic!("case {name:?}: not an HTTP target")),
+                        true,
+                    ),
+                    _ => panic!("case {name:?}: the target's kind is not the request's kind"),
+                };
                 let port = target
                     .get("port")
                     .and_then(JsonValue::get::<f64>)
                     .unwrap_or_else(|| panic!("case {name:?}: missing numeric port"));
-                actual.method() == string(target, "method")
+                mcp_matches
+                    && actual.method() == string(target, "method")
                     && actual.scheme() == string(target, "scheme")
                     && actual.host() == string(target, "host")
                     && f64::from(actual.port()) == *port
@@ -216,6 +251,7 @@ fn flow_vectors_pass() {
         scheme: b"https".to_vec(),
         authority: b"api.example.com".to_vec(),
         path: b"/orders".to_vec(),
+        mcp: None,
     };
     for bad in array(&root, "bad_tokens") {
         let bad = object(bad);

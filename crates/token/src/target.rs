@@ -8,9 +8,14 @@ use crate::canonical::{self, Scheme};
 
 /// What a server reports about one request, as the raw bytes it received.
 ///
-/// Plain data: four byte strings, no parsing done yet. A server adapter fills this in
+/// Plain data: byte strings, no parsing done yet. A server adapter fills this in
 /// and hands it to `gate`; it must not decode, normalize or tidy anything first. The
 /// canonicalizer decides what to accept, in one place.
+///
+/// The four HTTP fields are always present. [`mcp`](RequestFacts::mcp) is the one
+/// optional part, and it decides which kind of target the request has: `None` gives a
+/// [`Target::Http`], `Some` gives a [`Target::Mcp`]. One request still produces exactly
+/// one target either way.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RequestFacts<'a> {
     /// The method exactly as received, for example `GET`. Case matters.
@@ -28,14 +33,47 @@ pub struct RequestFacts<'a> {
     /// optional `?query`, for example `/orders/7?page=2`. Never a framework's decoded
     /// or cleaned-up path.
     pub path: &'a [u8],
+    /// The MCP operation this request carries, when it carries one: the `Mcp-Method`
+    /// and `Mcp-Name` header values, exactly as received.
+    ///
+    /// `None` means "this is not an MCP call", and the request gets an ordinary HTTP
+    /// target. An adapter fills this in only from the mirrored headers MCP revision
+    /// `2026-07-28` requires on every POST; it never reads a request body, and it never
+    /// guesses from the path. A request whose protocol version predates that revision
+    /// has no mirrored headers to read, so the adapter must refuse it rather than pass
+    /// `None` and silently check at HTTP depth.
+    pub mcp: Option<McpFacts<'a>>,
+}
+
+/// The MCP fields of one request, as the raw header bytes the server received.
+///
+/// MCP revision `2026-07-28` requires every POST to mirror the JSON-RPC body in
+/// headers: `Mcp-Method` mirrors `method`, and `Mcp-Name` mirrors `params.name` or
+/// `params.uri`. A server that processes the body **MUST** reject a header/body
+/// mismatch with HTTP 400 and JSON-RPC `-32020`. Reading the headers is safe only against a
+/// server that enforces this rule. No caveat and no check ever parses a body.
+///
+/// Both fields together are the key. [`name`](McpFacts::name) alone is ambiguous by
+/// construction, because it mirrors `params.name` for `tools/call` and `prompts/get`
+/// **and** `params.uri` for `resources/read`: a tool called `config` and a resource
+/// named `config` would otherwise be one value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct McpFacts<'a> {
+    /// The `Mcp-Method` header value, for example `tools/call`. Case matters: MCP makes
+    /// header *names* case-insensitive and header *values* case-sensitive.
+    pub method: &'a [u8],
+    /// The `Mcp-Name` header value, for example `get_document`, or a full resource URI
+    /// for `resources/read`. Case matters.
+    pub name: &'a [u8],
 }
 
 /// A request's target: the full destination it asks for, in canonical form.
 ///
-/// One variant per kind of destination. Today there is one kind, an HTTP request
-/// ([`HttpTarget`]); a later kind (for example a JSON-RPC operation or a queue topic)
-/// is a new variant, and the token format already tags each caveat with its kind, so
-/// adding one does not change how `v1` tokens are read.
+/// One variant per kind of destination: an ordinary HTTP request ([`HttpTarget`]) and
+/// an MCP call ([`McpTarget`], which is an HTTP target plus the operation the call
+/// names). A later kind (for example a queue topic) is a new variant, and the token
+/// format already tags each caveat with its kind, so adding one does not change how
+/// `v1` tokens are read.
 ///
 /// There is no public way to build one except [`crate::canonicalize`], so every target
 /// in the system came out of the one canonicalizer.
@@ -61,13 +99,30 @@ pub enum Target {
     /// An HTTP request: method, scheme, host, port and path.
     #[non_exhaustive]
     Http(HttpTarget),
+    /// An MCP call: an HTTP request plus the operation it names.
+    #[non_exhaustive]
+    Mcp(McpTarget),
 }
 
 impl Target {
-    /// The HTTP destination, if this is an HTTP target (every target, today).
+    /// The HTTP destination, if this target is an ordinary HTTP one.
+    ///
+    /// An MCP target gives `None`, even though it carries an HTTP destination inside
+    /// it: the two are different destinations, and a caller that wants the HTTP part
+    /// of an MCP call must ask for it through [`as_mcp`](Target::as_mcp) and
+    /// [`McpTarget::http`], so it cannot mistake one kind for the other.
     pub fn as_http(&self) -> Option<&HttpTarget> {
         match self {
             Target::Http(http) => Some(http),
+            Target::Mcp(_) => None,
+        }
+    }
+
+    /// The MCP destination, if this target is an MCP one.
+    pub fn as_mcp(&self) -> Option<&McpTarget> {
+        match self {
+            Target::Mcp(mcp) => Some(mcp),
+            Target::Http(_) => None,
         }
     }
 }
@@ -140,10 +195,50 @@ impl HttpTarget {
     }
 }
 
+/// An MCP call's destination, in canonical form.
+///
+/// The HTTP destination the call was sent to, plus the operation it names. Every MCP
+/// call is a POST to one path, so at HTTP depth `get_document` and `delete_document`
+/// are byte-identical; these two extra fields are what tells them apart.
+///
+/// Private fields and no public constructor: only the canonicalizer makes one. Two MCP
+/// calls have the same target exactly when their HTTP destination, method and name are
+/// the same bytes.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct McpTarget {
+    http: HttpTarget,
+    method: String,
+    name: String,
+}
+
+impl McpTarget {
+    /// The HTTP destination the call was sent to.
+    pub fn http(&self) -> &HttpTarget {
+        &self.http
+    }
+
+    /// The MCP method, for example `tools/call`. This is the `Mcp-Method` value, not
+    /// the HTTP method (which is `self.http().method()`).
+    pub fn method(&self) -> &str {
+        &self.method
+    }
+
+    /// The MCP name, for example `get_document`: the `Mcp-Name` value.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Builds a target. Crate-private, and called only by the canonicalizer, so every
+    /// target in the system came out of it.
+    pub(crate) fn new(http: HttpTarget, method: String, name: String) -> McpTarget {
+        McpTarget { http, method, name }
+    }
+}
+
 /// Test helpers shared by this crate's unit tests.
 #[cfg(test)]
 pub(crate) mod test_support {
-    use super::RequestFacts;
+    use super::{McpFacts, RequestFacts};
 
     /// Request facts from text, so a test can read as one line what a server would
     /// report as bytes.
@@ -158,6 +253,25 @@ pub(crate) mod test_support {
             scheme: scheme.as_bytes(),
             authority: authority.as_bytes(),
             path: path.as_bytes(),
+            mcp: None,
+        }
+    }
+
+    /// The same, plus the two MCP header values, so the request is an MCP call.
+    pub(crate) fn mcp_facts<'a>(
+        method: &'a str,
+        scheme: &'a str,
+        authority: &'a str,
+        path: &'a str,
+        mcp_method: &'a str,
+        mcp_name: &'a str,
+    ) -> RequestFacts<'a> {
+        RequestFacts {
+            mcp: Some(McpFacts {
+                method: mcp_method.as_bytes(),
+                name: mcp_name.as_bytes(),
+            }),
+            ..facts(method, scheme, authority, path)
         }
     }
 }
@@ -184,6 +298,7 @@ pub(crate) mod test_support {
 /// #   pub fn forge() -> Target {
 /// #       let real = canonicalize(&RequestFacts {
 /// #           method: b"GET", scheme: b"https", authority: b"example.com", path: b"/a",
+/// #           mcp: None,
 /// #       }).unwrap();
 /// #       Target::Http(real.as_http().unwrap().clone())
 /// #   }
@@ -222,5 +337,49 @@ mod tests {
         // Re-wrapping is what a downstream crate cannot do; inside this crate it is
         // ordinary code, which is exactly why the module comment above exists.
         assert_eq!(Target::Http(http.clone()), target);
+    }
+
+    #[test]
+    fn an_mcp_call_carries_its_http_destination_and_its_operation() {
+        let target = canonicalize(&test_support::mcp_facts(
+            "POST",
+            "https",
+            "mcp.example.com",
+            "/mcp",
+            "tools/call",
+            "get_document",
+        ))
+        .unwrap();
+        let mcp = target.as_mcp().unwrap();
+        assert_eq!(mcp.http().method(), "POST");
+        assert_eq!(mcp.http().authority(), "mcp.example.com");
+        assert_eq!(mcp.http().path(), "/mcp");
+        assert_eq!(mcp.method(), "tools/call");
+        assert_eq!(mcp.name(), "get_document");
+    }
+
+    /// The two kinds never answer each other's question, so no caller can read an MCP
+    /// call as if it were the plain HTTP request underneath it.
+    #[test]
+    fn the_two_kinds_do_not_stand_in_for_each_other() {
+        let http = canonicalize(&test_support::facts(
+            "POST",
+            "https",
+            "mcp.example.com",
+            "/mcp",
+        ))
+        .expect("a plain POST canonicalizes");
+        let mcp = canonicalize(&test_support::mcp_facts(
+            "POST",
+            "https",
+            "mcp.example.com",
+            "/mcp",
+            "tools/call",
+            "get_document",
+        ))
+        .expect("an MCP call canonicalizes");
+        assert!(http.as_mcp().is_none());
+        assert!(mcp.as_http().is_none());
+        assert_ne!(http, mcp);
     }
 }

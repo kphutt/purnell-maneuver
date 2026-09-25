@@ -38,6 +38,7 @@ mod tests {
             scheme: b"https",
             authority: b"example.com",
             path: path.as_bytes(),
+            mcp: None,
         })
         .unwrap()
     }

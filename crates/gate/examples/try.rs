@@ -108,6 +108,7 @@ fn parse_request(fields: &[String]) -> Result<RequestFacts<'_>, String> {
             scheme: scheme.as_bytes(),
             authority: authority.as_bytes(),
             path: path.as_bytes(),
+            mcp: None,
         }),
         _ => Err(format!(
             "a request needs exactly 4 fields (METHOD SCHEME AUTHORITY PATH), got {}",
@@ -159,7 +160,8 @@ fn denial_reason(denial: Denial) -> String {
             "the token said v1 but its body is not exactly what seal would have written".to_string()
         }
         Denial::UnknownCaveatKind => {
-            "the token holds a caveat kind this build does not know (only http today)".to_string()
+            "the token holds a caveat kind this build does not know (only http and mcp today)"
+                .to_string()
         }
         Denial::RequestTooLong => "a request field was longer than its limit".to_string(),
         Denial::MalformedMethod => "the method is empty or is not a valid HTTP token".to_string(),

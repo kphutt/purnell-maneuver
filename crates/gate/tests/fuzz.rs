@@ -1,5 +1,5 @@
-//! A fuzz loop with no dependencies: random bytes as the token and as every request
-//! field, fed to `gate::check`.
+//! A fixed-seed random-input loop with no dependencies: random bytes as the token and as
+//! the four HTTP request fields, fed to `gate::check`. It does not set the two MCP values.
 //!
 //! It asserts that `check` never panics and always returns `Allowed` or a named
 //! `Denial`, and that random tokens never allow anything. A fixed seed keeps every run
@@ -116,6 +116,7 @@ fn facts(fields: &[Vec<u8>; 4]) -> RequestFacts<'_> {
         scheme: &fields[1],
         authority: &fields[2],
         path: &fields[3],
+        mcp: None,
     }
 }
 

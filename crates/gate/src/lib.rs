@@ -16,8 +16,9 @@
 #![no_std]
 
 pub use token::{
-    Denial, HttpTarget, RequestFacts, Target, MAX_AUTHORITY_BYTES, MAX_METHOD_BYTES,
-    MAX_PATH_BYTES, MAX_SCHEME_BYTES, MAX_TOKEN_BYTES,
+    Denial, HttpTarget, McpFacts, McpTarget, RequestFacts, Target, MAX_AUTHORITY_BYTES,
+    MAX_MCP_METHOD_BYTES, MAX_MCP_NAME_BYTES, MAX_METHOD_BYTES, MAX_PATH_BYTES, MAX_SCHEME_BYTES,
+    MAX_TOKEN_BYTES,
 };
 
 use subtle::ConstantTimeEq;
@@ -139,6 +140,7 @@ mod tests {
             scheme: b"https",
             authority: b"example.com",
             path: path.as_bytes(),
+            mcp: None,
         }
     }
 

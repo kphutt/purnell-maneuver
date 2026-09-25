@@ -88,6 +88,7 @@ fn observe_raw(scheme: &str, authority: &str, path: &str) -> Result<Target, Deni
         scheme: scheme.as_bytes(),
         authority: authority.as_bytes(),
         path: path.as_bytes(),
+        mcp: None,
     })
 }
 

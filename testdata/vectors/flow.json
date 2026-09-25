@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "about": "End-to-end cases: each case observes some raw requests, learns a caveat set from them, seals it into a token, then checks more raw requests against that token. No caveat or valid token is ever written here: the only way to a valid token is observe, learn, seal. 'bad_tokens' are hand-written malformed tokens, each checked against the request 'GET https api.example.com /orders'; none may ever be allowed. (A hand-written token that is exactly canonical is allowed today, because tokens are not signed yet; that known gap is pinned by a unit test in gate, never by a vector.) Expected values are 'allowed' or the snake_case of a gate::Denial variant.",
+  "about": "End-to-end cases: each case observes some raw requests, learns a caveat set from them, seals it into a token, then checks more raw requests against that token. No caveat or valid token is ever written here: the only way to a valid token is observe, learn, seal. 'bad_tokens' are hand-written malformed tokens, each checked against the request 'GET https api.example.com /orders'; none may ever be allowed. (A hand-written token that is exactly canonical is allowed today, because tokens are not signed yet; that known gap is pinned by a unit test in gate, never by a vector.) Expected values are 'allowed' or the snake_case of a gate::Denial variant. A request may also carry an optional 'mcp' object with 'method' and 'name', the two mirrored MCP header values; a request that carries it has an mcp target and one that does not has an http target, and the two never stand in for each other.",
   "cases": [
     {
       "name": "nothing_observed_allows_nothing",
@@ -749,6 +749,412 @@
           "expected": "not_listed"
         }
       ]
+    },
+    {
+      "name": "mcp_depth_tells_two_tool_calls_apart",
+      "note": "The headline for the mcp kind. Every call is the same POST to the same path, so at http depth the allowed and the denied request are byte-identical. Only the operation learned is allowed.",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "get_document"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp?x=1",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "delete_document"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "list_documents"
+            }
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "mcp_depth_tells_two_operations_apart",
+      "note": "The method half of the key. resources/read was never observed, so it denies even where the name was learned for another method.",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "get_document"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "resources/read",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "prompts/get",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "resources/read",
+              "name": "file:///projects/myapp/config.json"
+            }
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "an_mcp_caveat_does_not_cover_the_post_underneath_it",
+      "note": "The two kinds never stand in for each other. A token that allows one tool call does not allow the bare POST, and a token that allows the bare POST does not allow any tool call.",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "get_document"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp"
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "an_http_caveat_does_not_cover_an_mcp_call",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp"
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "an_off_bound_host_denies_whatever_the_operation",
+      "note": "An unrelated destination: the http half denies it.",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "get_document"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp2.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "evil.example",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/admin",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "not_listed"
+        }
+      ]
+    },
+    {
+      "name": "one_value_one_spelling_end_to_end",
+      "note": "A learned operation is allowed in the one spelling MCP leaves open for it, and the gratuitously wrapped spelling of the same value is denied rather than folded onto it.",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "get_document"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "=?base64?Z2V0X2RvY3VtZW50?="
+            }
+          },
+          "expected": "malformed_mcp_name"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "=?base64?Z2V0O2RvY3VtZW50?="
+            }
+          },
+          "expected": "malformed_mcp_name"
+        }
+      ]
+    },
+    {
+      "name": "a_mixed_token_holds_both_kinds",
+      "observed": [
+        {
+          "method": "GET",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/health"
+        },
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "get_document"
+          }
+        },
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "resources/read",
+            "name": "file:///projects/myapp/config.json"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/health"
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "get_document"
+            }
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "resources/read",
+              "name": "file:///projects/myapp/config.json"
+            }
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "resources/read",
+              "name": "file:///etc/shadow"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "GET",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/admin"
+          },
+          "expected": "not_listed"
+        }
+      ]
     }
   ],
   "bad_tokens": [
@@ -849,14 +1255,33 @@
     },
     {
       "name": "unknown_kind",
-      "token": "v1;mcp tools/call search",
+      "note": "A well-formed kind tag this build does not know.",
+      "token": "v1;queue orders.created",
       "expected": "unknown_caveat_kind"
     },
     {
       "name": "unknown_kind_next_to_a_match",
       "note": "A caveat of an unknown kind is never skipped: the whole token denies, even though the other caveat lists the request.",
-      "token": "v1;http GET https api.example.com /orders;mcp tools/call search",
+      "token": "v1;http GET https api.example.com /orders;queue orders.created",
       "expected": "unknown_caveat_kind"
+    },
+    {
+      "name": "mcp_kind_with_an_http_body",
+      "note": "A known kind with the wrong number of fields is malformed, not an unknown kind: the kind tag is read first and it is one this build knows.",
+      "token": "v1;mcp POST https mcp.example.com /mcp",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "mcp_value_with_a_space",
+      "note": "A space is the token's field separator, so a caveat body can never hold one; here it reads as a seventh field.",
+      "token": "v1;mcp POST https mcp.example.com /mcp tools/call get document",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "mcp_value_wrapped_when_it_did_not_need_to_be",
+      "note": "'=?base64?Z2V0X2RvY3VtZW50?=' decodes to 'get_document', which needs no wrapping. One value may have only one spelling, so the wrapped one denies rather than folding onto the plain one.",
+      "token": "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?Z2V0X2RvY3VtZW50?=",
+      "expected": "malformed_token"
     }
   ]
 }

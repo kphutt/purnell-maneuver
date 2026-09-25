@@ -22,7 +22,8 @@ pub enum Denial {
     /// skipped, so the whole token denies.
     UnknownCaveatKind,
     /// A request field was longer than its limit (method 32 bytes, scheme 16,
-    /// authority 259, path with query 4096). Checked before reading any field.
+    /// authority 259, path with query 4096, MCP method 64, MCP name 1024). Checked before
+    /// reading any field.
     RequestTooLong,
     /// The method is empty or is not a valid HTTP token (RFC 9110 §9.1, §5.6.2).
     MalformedMethod,
@@ -41,6 +42,14 @@ pub enum Denial {
     MalformedPort,
     /// The path breaks one of the path rules.
     MalformedPath,
+    /// The `Mcp-Method` value breaks one of the MCP value rules: it is empty, carries a
+    /// byte that is not visible ASCII (so a space or a control byte), carries a `;`, is
+    /// base64-wrapped when it did not have to be or unwrapped when it did, or its
+    /// wrapping is not canonical base64.
+    MalformedMcpMethod,
+    /// The `Mcp-Name` value breaks one of the same MCP value rules as
+    /// [`Denial::MalformedMcpMethod`].
+    MalformedMcpName,
     /// The request is well formed, the token is well formed, and the token does not
     /// list the request's target. This includes every request checked against an empty
     /// caveat set.
@@ -70,6 +79,8 @@ impl Denial {
             Denial::MalformedHost => "malformed_host",
             Denial::MalformedPort => "malformed_port",
             Denial::MalformedPath => "malformed_path",
+            Denial::MalformedMcpMethod => "malformed_mcp_method",
+            Denial::MalformedMcpName => "malformed_mcp_name",
             Denial::NotListed => "not_listed",
         }
     }
@@ -96,6 +107,8 @@ mod tests {
         Denial::MalformedHost,
         Denial::MalformedPort,
         Denial::MalformedPath,
+        Denial::MalformedMcpMethod,
+        Denial::MalformedMcpName,
         Denial::NotListed,
     ];
 
@@ -116,6 +129,8 @@ mod tests {
             | Denial::MalformedHost
             | Denial::MalformedPort
             | Denial::MalformedPath
+            | Denial::MalformedMcpMethod
+            | Denial::MalformedMcpName
             | Denial::NotListed => {}
         }
     }

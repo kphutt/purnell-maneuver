@@ -160,6 +160,7 @@ fn facts(index: usize) -> RequestFacts<'static> {
         scheme: scheme.as_bytes(),
         authority: authority.as_bytes(),
         path: path.as_bytes(),
+        mcp: None,
     }
 }
 

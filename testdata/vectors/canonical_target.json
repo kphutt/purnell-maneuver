@@ -3424,6 +3424,426 @@
           "path": "/admin"
         }
       }
+    },
+    {
+      "name": "mcp_plain_call",
+      "note": "The everyday MCP call. The HTTP half is an ordinary POST to one path; the two mirrored headers are what tell one operation from another.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "get_document"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "get_document"
+        }
+      }
+    },
+    {
+      "name": "mcp_a_second_tool_on_the_same_post",
+      "note": "Why the kind exists: same method, same scheme, same authority, same path. Only the name differs, so these two must be two targets.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "delete_document"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "delete_document"
+        }
+      }
+    },
+    {
+      "name": "mcp_resource_read_is_a_full_uri",
+      "note": "Mcp-Name mirrors params.uri for resources/read, so it is a whole URI and not a tool name. It is kept byte for byte and none of the path rules are applied to it.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "resources/read",
+          "name": "file:///projects/myapp/config.json"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "resources/read",
+          "mcp_name": "file:///projects/myapp/config.json"
+        }
+      }
+    },
+    {
+      "name": "mcp_the_method_and_the_name_are_one_key",
+      "note": "Mcp-Name is overloaded across three namespaces, so a name without its method is ambiguous by construction: a tool called 'config' and a prompt called 'config' differ only in the method.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "prompts/get",
+          "name": "config"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "prompts/get",
+          "mcp_name": "config"
+        }
+      }
+    },
+    {
+      "name": "mcp_query_is_still_dropped",
+      "note": "The HTTP half keeps every HTTP rule, the query drop included.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp?session=7",
+        "mcp": {
+          "method": "tools/call",
+          "name": "get_document"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "get_document"
+        }
+      }
+    },
+    {
+      "name": "mcp_values_are_case_sensitive",
+      "note": "MCP makes header names case-insensitive and header values case-sensitive, so a value is never folded. A reader lowercases the header NAME and nothing else.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "TOOLS/CALL",
+          "name": "Get_Document"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "TOOLS/CALL",
+          "mcp_name": "Get_Document"
+        }
+      }
+    },
+    {
+      "name": "mcp_explicit_default_port_still_denies",
+      "note": "The HTTP half is canonicalized by exactly the same rules as an http caveat.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com:443",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "get_document"
+        }
+      },
+      "expected": {
+        "denial": "malformed_port"
+      }
+    },
+    {
+      "name": "mcp_uppercase_host_still_denies",
+      "note": "As above: nothing about the MCP fields relaxes an HTTP rule.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "MCP.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "get_document"
+        }
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_with_a_space",
+      "note": "A space is the token's field separator, and a conforming Mcp-Name may carry one ('us west 1' travels as a literal header value). Denying is a tightening and a limit for now.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "get document"
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_with_a_semicolon",
+      "note": "';' is the token's caveat separator, and it is legal in a URI path segment, so a resources/read name can carry one. Denied for the same reason as the space.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "resources/read",
+          "name": "file:///a;b"
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_wrapped_when_it_need_not_be",
+      "note": "'=?base64?Z2V0X2RvY3VtZW50?=' decodes to 'get_document', which needs no wrapping. MCP permits the gratuitous wrapping and requires a server to decode it, so both spellings mean one operation; accepting both would be one destination with two names. The wrapped one is denied rather than folded onto the plain one.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?Z2V0X2RvY3VtZW50?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_that_reads_as_a_wrapper_sent_plain",
+      "note": "The other half of the same rule. '=?BASE64?Zm9v?=' is an ordinary value (the markers are case-sensitive and lowercase), but sent plain it would be read as a wrapper, so MCP leaves it no plain spelling and it must arrive wrapped.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?BASE64?Zm9v?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "mcp_name_that_reads_as_a_wrapper_sent_wrapped",
+      "note": "The one legal spelling of the value above. It is stored wrapped, because that is the only way it can travel.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?PT9CQVNFNjQ/Wm05dj89?="
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "=?base64?PT9CQVNFNjQ/Wm05dj89?="
+        }
+      }
+    },
+    {
+      "name": "attack_mcp_name_smuggling_a_separator_inside_base64",
+      "note": "'=?base64?Z2V0IGRvY3VtZW50?=' decodes to 'get document'. Comparing the raw header bytes would store a space inside a caveat body, where it reads as a field separator. This is why the wrapper is decoded before the value rules are applied.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?Z2V0IGRvY3VtZW50?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "attack_mcp_name_smuggling_a_caveat_separator_inside_base64",
+      "note": "The same, with ';': '=?base64?Z2V0O2RvY3VtZW50?=' decodes to 'get;document', which would split one caveat into two.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?Z2V0O2RvY3VtZW50?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_base64url",
+      "note": "base64url spells the same bytes with '-' and '_' instead of '+' and '/'. MCP's own example uses the standard alphabet; nothing says base64url is excluded, so two byte strings would stand for one value. Only the standard alphabet is read.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?PT9CQVNFNjQ_Wm05dj89?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_base64_unpadded",
+      "note": "Unpadded base64 is a second spelling of the same value.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?PT9CQVNFNjQ/Wm05dj8?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_base64_spare_trailing_bits",
+      "note": "'QR==' and 'QQ==' both decode to 'A' in a permissive decoder: the last digit's unused low bits are not part of the value. Two spellings again, so the bits the padding drops must be zero.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?QR==?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "mcp_name_empty",
+      "note": "MCP says nothing about an empty Mcp-Name, and RFC 9110 leaves receiver behaviour for an odd field undefined, so it is denied rather than guessed at.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": ""
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "mcp_name_non_ascii",
+      "note": "The token is printable ASCII end to end. A value MCP would require to be wrapped for this reason is denied.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "café"
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "mcp_method_malformed_names_its_own_field",
+      "note": "The MCP method is read before the name, so it names the denial.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools call",
+          "name": "get document"
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_method"
+      }
     }
   ]
 }

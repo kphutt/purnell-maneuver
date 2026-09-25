@@ -15,6 +15,12 @@
 //!   purpose.
 //! - **Totality and bounded cost**: any bytes, up to and past the limits, give a target
 //!   or a named denial, never a panic, and a target is never longer than the limits.
+//! - **One value, one spelling** (the `mcp` kind): no two accepted `Mcp-Method` or
+//!   `Mcp-Name` byte strings stand for the same value. That is the same no-merge rule
+//!   one layer in, where MCP's base64 wrapper would otherwise give one value two names.
+//!
+//! Half the hostile requests carry MCP header values as well, so every invariant sees
+//! both kinds of target.
 //!
 //! The fixed seed makes every run identical, so a failure reproduces.
 
@@ -31,8 +37,8 @@
 use std::collections::BTreeMap;
 
 use gate::{
-    observe, Denial, HttpTarget, RequestFacts, Target, MAX_AUTHORITY_BYTES, MAX_METHOD_BYTES,
-    MAX_PATH_BYTES, MAX_SCHEME_BYTES,
+    observe, Denial, HttpTarget, McpFacts, RequestFacts, Target, MAX_AUTHORITY_BYTES,
+    MAX_MCP_METHOD_BYTES, MAX_MCP_NAME_BYTES, MAX_METHOD_BYTES, MAX_PATH_BYTES, MAX_SCHEME_BYTES,
 };
 
 /// How many hostile requests each invariant sees. A few seconds in a debug build.
@@ -104,10 +110,86 @@ const PATH_PIECES: &[&str] = &[
     "\t", "%25", "%3f", "%3F", ":", "@", "+", "!", "%7f", "%7F", "%00",
 ];
 const QUERIES: &[&str] = &["", "", "?", "?a=1", "?a=%2F", "?..", "?#"];
-/// A hostile request: method, scheme, authority, and path including any query.
-type Hostile = [String; 4];
+/// MCP header values, spelled every way the rules have something to say about:
+/// plain, wrapped, wrapped when it need not have been, wrapped badly, and carrying the
+/// token's own separators.
+const MCP_VALUES: &[&str] = &[
+    // Accepted spellings are weighted up, the way SCHEMES is, so the invariants below
+    // see plenty of accepted MCP targets to compare with each other.
+    "tools/call",
+    "tools/call",
+    "tools/call",
+    "resources/read",
+    "resources/read",
+    "prompts/get",
+    "get_document",
+    "get_document",
+    "get_document",
+    "delete_document",
+    "delete_document",
+    "file:///projects/myapp/config.json",
+    "a.b-c_d",
+    "A",
+    "=?=",
+    // "=?BASE64?Zm9v?=" wrapped: it reads as a wrapper, so this is its one spelling.
+    "=?base64?PT9CQVNFNjQ/Wm05dj89?=",
+    "=?base64?PT9CQVNFNjQ/Wm05dj89?=",
+    // Denied spellings. The unit tests cover these exhaustively; here they are just
+    // enough to keep the accepted set meaningful.
+    "",
+    "get document",
+    "get;document",
+    " get_document",
+    "caf\u{e9}",
+    // "get_document" wrapped: canonical base64, but it needed no wrapping.
+    "=?base64?Z2V0X2RvY3VtZW50?=",
+    // "get document" and "get;document" wrapped: the separators, smuggled.
+    "=?base64?Z2V0IGRvY3VtZW50?=",
+    "=?base64?Z2V0O2RvY3VtZW50?=",
+    // The same value as the accepted wrapper above, sent plain.
+    "=?BASE64?Zm9v?=",
+    // base64url, unpadded, spare trailing bits, padding in the middle, empty.
+    "=?base64?PT9CQVNFNjQ_Wm05dj89?=",
+    "=?base64?PT9CQVNFNjQ/Wm05dj8?=",
+    "=?base64?QR==?=",
+    "=?base64?PT9CQVNFNjQ/=m05dj89?=",
+    "=?base64??=",
+    "=?base64?",
+    "=?x?=",
+];
+
+/// A hostile request: method, scheme, authority, path including any query, and the two
+/// MCP header values when it carries them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Hostile {
+    fields: [String; 4],
+    mcp: Option<[String; 2]>,
+}
 
 fn hostile(rng: &mut Rng) -> Hostile {
+    Hostile {
+        fields: hostile_http(rng),
+        mcp: Some([
+            rng.pick(MCP_VALUES).to_string(),
+            rng.pick(MCP_VALUES).to_string(),
+        ]),
+    }
+}
+
+/// The same request twice: once as an ordinary HTTP request, once as the MCP call it
+/// would be with those two header values. Every invariant runs over both, so neither
+/// kind of target gets half the rounds.
+fn both_kinds(request: &Hostile) -> [Hostile; 2] {
+    [
+        Hostile {
+            fields: request.fields.clone(),
+            mcp: None,
+        },
+        request.clone(),
+    ]
+}
+
+fn hostile_http(rng: &mut Rng) -> [String; 4] {
     let method = rng.pick(METHODS).to_string();
     let scheme = rng.pick(SCHEMES).to_string();
     let host = if rng.below(2) == 0 {
@@ -131,28 +213,51 @@ fn hostile(rng: &mut Rng) -> Hostile {
     [method, scheme, authority, path]
 }
 
-fn facts(fields: &Hostile) -> RequestFacts<'_> {
+fn facts(request: &Hostile) -> RequestFacts<'_> {
     RequestFacts {
-        method: fields[0].as_bytes(),
-        scheme: fields[1].as_bytes(),
-        authority: fields[2].as_bytes(),
-        path: fields[3].as_bytes(),
+        method: request.fields[0].as_bytes(),
+        scheme: request.fields[1].as_bytes(),
+        authority: request.fields[2].as_bytes(),
+        path: request.fields[3].as_bytes(),
+        mcp: request.mcp.as_ref().map(|[method, name]| McpFacts {
+            method: method.as_bytes(),
+            name: name.as_bytes(),
+        }),
     }
 }
 
-fn http(target: &Target) -> &HttpTarget {
-    target
-        .as_http()
-        .expect("every target is an HTTP target today")
+/// A target's HTTP destination and, for an MCP target, the operation it names. Every
+/// invariant below reads a target through this, so neither kind is skipped.
+fn parts(target: &Target) -> (&HttpTarget, Option<(&str, &str)>) {
+    match (target.as_http(), target.as_mcp()) {
+        (Some(http), None) => (http, None),
+        (None, Some(mcp)) => (mcp.http(), Some((mcp.method(), mcp.name()))),
+        _ => panic!("a target is exactly one kind: {target:?}"),
+    }
+}
+
+/// The request a target writes back to, for the idempotence test.
+fn written_back(target: &Target) -> Hostile {
+    let (http, mcp) = parts(target);
+    Hostile {
+        fields: [
+            http.method().to_string(),
+            http.scheme().to_string(),
+            http.authority(),
+            http.path().to_string(),
+        ],
+        mcp: mcp.map(|(method, name)| [method.to_string(), name.to_string()]),
+    }
 }
 
 /// What the no-merge invariant compares, computed from the raw request alone by a
 /// simple, separate reading: method, scheme and host bytes exactly as sent, the port
-/// (the scheme's default when absent), and the path bytes before any `?`.
-type RawKey = (String, String, String, u16, String);
+/// (the scheme's default when absent), the path bytes before any `?`, and the MCP
+/// header values exactly as sent.
+type RawKey = (String, String, String, u16, String, Option<[String; 2]>);
 
-fn raw_key(fields: &Hostile) -> RawKey {
-    let [method, scheme, authority, path] = fields;
+fn raw_key(request: &Hostile) -> RawKey {
+    let [method, scheme, authority, path] = &request.fields;
     // Accepted authorities hold at most one `:` outside an IPv6 literal's brackets.
     let port_at = match authority.find(']') {
         Some(close) => authority[close..].find(':').map(|at| close + at),
@@ -169,7 +274,45 @@ fn raw_key(fields: &Hostile) -> RawKey {
         host.to_string(),
         port,
         path.to_string(),
+        request.mcp.clone(),
     )
+}
+
+/// What an MCP header value stands for, read separately from the canonicalizer: the
+/// bytes a base64 wrapper holds, or the value itself. Deliberately permissive, so it is
+/// an oracle rather than a second copy of the rule -- anything the canonicalizer accepts
+/// it reads the same way, and it also reads spellings the canonicalizer denies.
+fn mcp_value_stands_for(raw: &str) -> String {
+    let Some(payload) = raw
+        .strip_prefix("=?base64?")
+        .and_then(|rest| rest.strip_suffix("?="))
+    else {
+        return raw.to_string();
+    };
+    let digits: Vec<u32> = payload
+        .trim_end_matches('=')
+        .chars()
+        .map(|digit| {
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+                .find(digit)
+                .map_or(u32::MAX, |value| value as u32)
+        })
+        .collect();
+    if digits.contains(&u32::MAX) {
+        return raw.to_string();
+    }
+    let mut bits = String::new();
+    for value in digits {
+        bits.push_str(&format!("{value:06b}"));
+    }
+    let bytes: Vec<u8> = bits
+        .as_bytes()
+        .as_chunks::<8>()
+        .0
+        .iter()
+        .map(|byte| u8::from_str_radix(std::str::from_utf8(byte).unwrap(), 2).unwrap())
+        .collect();
+    String::from_utf8(bytes).unwrap_or_else(|_| raw.to_string())
 }
 
 fn is_named_request_denial(denial: Denial) -> bool {
@@ -181,6 +324,8 @@ fn is_named_request_denial(denial: Denial) -> bool {
             | Denial::MalformedHost
             | Denial::MalformedPort
             | Denial::MalformedPath
+            | Denial::MalformedMcpMethod
+            | Denial::MalformedMcpName
     )
 }
 
@@ -189,31 +334,19 @@ fn idempotence_a_target_written_back_canonicalizes_to_itself() {
     let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
     let mut accepted = 0;
     for round in 0..HOSTILE_ROUNDS {
-        let request = hostile(&mut rng);
-        let Ok(target) = observe(&facts(&request)) else {
-            continue;
-        };
-        accepted += 1;
-        let first = http(&target);
-        let written = [
-            first.method().to_string(),
-            first.scheme().to_string(),
-            first.authority(),
-            first.path().to_string(),
-        ];
-        let again = observe(&facts(&written))
-            .unwrap_or_else(|denial| panic!("round {round}: {written:?} denied: {denial:?}"));
-        assert_eq!(again, target, "round {round}: {request:?} then {written:?}");
-        let second = http(&again);
-        let rewritten = [
-            second.method().to_string(),
-            second.scheme().to_string(),
-            second.authority(),
-            second.path().to_string(),
-        ];
-        assert_eq!(rewritten, written, "round {round}: {request:?}");
+        for request in both_kinds(&hostile(&mut rng)) {
+            let Ok(target) = observe(&facts(&request)) else {
+                continue;
+            };
+            accepted += 1;
+            let written = written_back(&target);
+            let again = observe(&facts(&written))
+                .unwrap_or_else(|denial| panic!("round {round}: {written:?} denied: {denial:?}"));
+            assert_eq!(again, target, "round {round}: {request:?} then {written:?}");
+            assert_eq!(written_back(&again), written, "round {round}: {request:?}");
+        }
     }
-    println!("idempotence: {HOSTILE_ROUNDS} hostile requests, {accepted} accepted");
+    println!("idempotence: {HOSTILE_ROUNDS} rounds x both kinds, {accepted} accepted");
     assert!(
         accepted > 1_000,
         "the generator must reach accepted requests"
@@ -226,22 +359,23 @@ fn no_merge_one_target_means_the_same_method_scheme_host_port_and_path() {
     let mut seen: BTreeMap<Target, (RawKey, Hostile)> = BTreeMap::new();
     let (mut accepted, mut shared) = (0, 0);
     for round in 0..HOSTILE_ROUNDS {
-        let request = hostile(&mut rng);
-        let Ok(target) = observe(&facts(&request)) else {
-            continue;
-        };
-        accepted += 1;
-        let key = raw_key(&request);
-        match seen.get(&target) {
-            Some((first_key, first_request)) => {
-                shared += 1;
-                assert_eq!(
-                    key, *first_key,
-                    "round {round}: {request:?} and {first_request:?} merged into {target:?}"
-                );
-            }
-            None => {
-                seen.insert(target, (key, request));
+        for request in both_kinds(&hostile(&mut rng)) {
+            let Ok(target) = observe(&facts(&request)) else {
+                continue;
+            };
+            accepted += 1;
+            let key = raw_key(&request);
+            match seen.get(&target) {
+                Some((first_key, first_request)) => {
+                    shared += 1;
+                    assert_eq!(
+                        key, *first_key,
+                        "round {round}: {request:?} and {first_request:?} merged into {target:?}"
+                    );
+                }
+                None => {
+                    seen.insert(target, (key, request));
+                }
             }
         }
     }
@@ -271,11 +405,15 @@ fn random_bytes(rng: &mut Rng, limit: usize) -> Vec<u8> {
 fn assert_total_and_bounded(request: &RequestFacts, context: &str) {
     match observe(request) {
         Ok(target) => {
-            let http = http(&target);
+            let (http, mcp) = parts(&target);
             assert!(http.method().len() <= MAX_METHOD_BYTES, "{context}");
             assert!(http.scheme().len() <= MAX_SCHEME_BYTES, "{context}");
             assert!(http.authority().len() <= MAX_AUTHORITY_BYTES, "{context}");
             assert!(http.path().len() <= MAX_PATH_BYTES, "{context}");
+            if let Some((method, name)) = mcp {
+                assert!(method.len() <= MAX_MCP_METHOD_BYTES, "{context}");
+                assert!(name.len() <= MAX_MCP_NAME_BYTES, "{context}");
+            }
         }
         Err(denial) => assert!(is_named_request_denial(denial), "{context}: {denial:?}"),
     }
@@ -290,19 +428,26 @@ fn totality_and_bounded_cost_any_bytes_give_a_bounded_target_or_a_named_denial()
             random_bytes(&mut rng, MAX_SCHEME_BYTES),
             random_bytes(&mut rng, MAX_AUTHORITY_BYTES),
             random_bytes(&mut rng, MAX_PATH_BYTES),
+            random_bytes(&mut rng, MAX_MCP_METHOD_BYTES),
+            random_bytes(&mut rng, MAX_MCP_NAME_BYTES),
         ];
         let request = RequestFacts {
             method: &fields[0],
             scheme: &fields[1],
             authority: &fields[2],
             path: &fields[3],
+            mcp: (round % 2 == 0).then_some(McpFacts {
+                method: &fields[4],
+                name: &fields[5],
+            }),
         };
         assert_total_and_bounded(&request, &format!("random round {round}"));
     }
     let mut rng = Rng(0x7074_A10F_4057_11E5);
     for round in 0..HOSTILE_ROUNDS {
-        let request = hostile(&mut rng);
-        assert_total_and_bounded(&facts(&request), &format!("hostile round {round}"));
+        for request in both_kinds(&hostile(&mut rng)) {
+            assert_total_and_bounded(&facts(&request), &format!("hostile round {round}"));
+        }
     }
 
     // The worst shapes, filled to exactly each limit and one byte past it: every byte
@@ -323,14 +468,80 @@ fn totality_and_bounded_cost_any_bytes_give_a_bounded_target_or_a_named_denial()
                 (authority, b"/".as_slice()),
                 (bracketed, b"/".as_slice()),
             ] {
+                let mcp_fill = fill.repeat(MAX_MCP_NAME_BYTES + 1);
+                let mcp_name = &mcp_fill.as_bytes()[..MAX_MCP_NAME_BYTES + extra];
                 let request = RequestFacts {
                     method: b"GET",
                     scheme: b"https",
                     authority,
                     path,
+                    mcp: Some(McpFacts {
+                        method: b"tools/call",
+                        name: mcp_name,
+                    }),
+                };
+                assert_total_and_bounded(&request, &format!("fill {fill:?} + {extra}"));
+                let request = RequestFacts {
+                    mcp: None,
+                    ..request
                 };
                 assert_total_and_bounded(&request, &format!("fill {fill:?} + {extra}"));
             }
         }
     }
+}
+
+/// One value, one spelling. MCP lets a header value travel plain or base64-wrapped, so
+/// without a rule one destination would have two names -- the merge this project exists
+/// to prevent, one layer in from the URL. The canonicalizer answers it by accepting only
+/// the one spelling MCP leaves open for each value, so this test reads what each
+/// accepted value *stands for* with a separate, deliberately permissive decoder and
+/// requires that no two accepted spellings stand for the same thing.
+#[test]
+fn one_value_one_spelling_no_two_accepted_mcp_values_stand_for_the_same_thing() {
+    let mut rng = Rng(0x11CE_11CE_B0B0_0001);
+    // What each value stands for -> the one accepted spelling of it seen so far.
+    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    let mut accepted = 0;
+    for round in 0..HOSTILE_ROUNDS {
+        let request = hostile(&mut rng);
+        let Ok(target) = observe(&facts(&request)) else {
+            continue;
+        };
+        let (_, Some((method, name))) = parts(&target) else {
+            continue;
+        };
+        accepted += 1;
+        for value in [method, name] {
+            let stands_for = mcp_value_stands_for(value);
+            match seen.get(&stands_for) {
+                Some(first) => assert_eq!(
+                    first, value,
+                    "round {round}: {first:?} and {value:?} both stand for {stands_for:?}"
+                ),
+                None => {
+                    seen.insert(stands_for, value.to_string());
+                }
+            }
+        }
+    }
+    println!(
+        "one value one spelling: {accepted} accepted MCP targets, {} distinct values",
+        seen.len()
+    );
+    // Lower than the other invariants' floor on purpose: an MCP target needs the HTTP
+    // half of a deliberately hostile request to be accepted *and* both header values to
+    // be accepted, so the two populations are not comparable. Several hundred is plenty
+    // for what this guard is for.
+    assert!(
+        accepted > 500,
+        "the generator must reach accepted MCP calls"
+    );
+    // The corpus really does offer two spellings of one value, so the assertion above
+    // had something to catch: "=?BASE64?Zm9v?=" is in it plain and wrapped.
+    assert_eq!(
+        seen.get("=?BASE64?Zm9v?=").map(String::as_str),
+        Some("=?base64?PT9CQVNFNjQ/Wm05dj89?="),
+        "only the wrapped spelling may be accepted"
+    );
 }
