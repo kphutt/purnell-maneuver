@@ -136,6 +136,21 @@ const REQUESTS: &[Labelled] = &[
     ),
     ("GET", "https", "[0::1]", "/a", None),
     ("GET", "https", "[::A]", "/a", None),
+    // One row per field-class boundary. Every row above is about a *shape* — a dot
+    // segment, a host spelling, a port — so none of them says anything about which
+    // bytes a field may hold, and a rule that quietly gained a byte would leave this
+    // oracle green. These four are denied, so they never enter the subset enumeration
+    // and the 2^n count is unchanged; they are still checked against every token.
+    // A raw CR in the path: the header-injection primitive, since a canonical field
+    // is carried in an HTTP header value.
+    ("GET", "https", "example.com", "/a\rb", None),
+    // A raw CR in the method, which is written into the token ahead of everything else.
+    ("GE\rT", "https", "example.com", "/a", None),
+    // A backslash in the host: WHATWG rewrites it to `/`, so a client and the gate
+    // would disagree about where the authority ends.
+    ("GET", "https", "exa\\mple.com", "/a", None),
+    // A query byte in the host: the authority is not split on `?` the way a path is.
+    ("GET", "https", "example.com?x=1", "/a", None),
 ];
 
 fn facts(index: usize) -> RequestFacts<'static> {

@@ -221,6 +221,9 @@ fn split_authority(authority: &[u8]) -> Result<(&[u8], Option<&[u8]>), Denial> {
 /// - An IPv6 literal must be in brackets and already in RFC 5952 text form, lowercase
 ///   hex included: `[::1]` and `[2001:db8::1]`, never `[0::1]`, `[0:0:0:0:0:0:0:1]` or
 ///   `[2001:DB8::1]`. Forms with an embedded IPv4 part and zone ids are denied.
+/// - An IPv4-mapped address (`::ffff:0:0/96`) is denied in **both** its spellings, hex
+///   and dotted, because RFC 5952 does not give it one canonical text form
+///   ([`is_ipv4_mapped`]).
 /// - At most 253 bytes (`MAX_HOST_BYTES`).
 fn canonical_host(host: &[u8]) -> Result<String, Denial> {
     if host.len() > MAX_HOST_BYTES {
@@ -274,10 +277,40 @@ fn is_dotted_quad(host: &[u8]) -> bool {
 }
 
 /// Whether the text inside the brackets is an IPv6 address written exactly the way
-/// RFC 5952 §4 writes it, lowercase hex included. Only hex groups and one `::` are
-/// read, so an embedded IPv4 part or a zone id is denied.
+/// RFC 5952 §4 writes it, lowercase hex included, and is not IPv4-mapped. Only hex
+/// groups and one `::` are read, so an embedded IPv4 part or a zone id is denied.
 fn is_canonical_ipv6(text: &[u8]) -> bool {
-    parse_ipv6(text).is_some_and(|groups| write_ipv6(&groups).as_bytes() == text)
+    parse_ipv6(text)
+        .is_some_and(|groups| !is_ipv4_mapped(&groups) && write_ipv6(&groups).as_bytes() == text)
+}
+
+/// Whether an address carries the IPv4-mapped prefix `::ffff:0:0/96`
+/// ([RFC 4291 §2.5.5.2](https://www.rfc-editor.org/rfc/rfc4291#section-2.5.5.2)).
+///
+/// These addresses have no single text form, so **both** spellings are denied. RFC 5952
+/// §4 compresses zero groups and writes hex, which gives `[::ffff:7f00:1]`.
+/// [RFC 5952 §5](https://www.rfc-editor.org/rfc/rfc5952#section-5) then recommends the
+/// mixed, dotted notation for addresses with a well-known IPv4-embedding prefix, which
+/// gives `[::ffff:127.0.0.1]` for the same 128 bits. §4 alone would make the hex
+/// spelling canonical and the dotted one a denial; that is backwards, because the
+/// dotted one is what real software writes. Rust's `std::net::Ipv6Addr` and Python's
+/// `ipaddress` both serialise this prefix in the dotted form, so an adapter that reads
+/// `:authority` through its language's IP type and writes it back emits the spelling
+/// §4 rejects — every IPv4-mapped literal in such a deployment would be a false denial.
+///
+/// Accepting the dotted spelling as well would be a *widening* of a rule, which needs a
+/// new caveat kind. Denying both is a tightening, which is safe in place: an existing
+/// token that lists one of these stops reading back and denies as a whole. False
+/// denials for IPv4-mapped literals are the accepted cost, and they are the same cost
+/// either spelling arrives in.
+///
+/// **This does not extend to the neighbouring well-known prefixes.** The NAT64 prefix
+/// `64:ff9b::/96` ([RFC 6052 §2.1](https://www.rfc-editor.org/rfc/rfc6052#section-2.1))
+/// is a well-known IPv4-embedding prefix too, but Rust and Python both leave it in hex,
+/// so no parser disagrees about how to write it and `[64:ff9b::c000:201]` stays
+/// accepted (vector `host_ipv6_nat64_prefix_kept`).
+fn is_ipv4_mapped(groups: &[u16; 8]) -> bool {
+    matches!(groups, [0, 0, 0, 0, 0, 0xffff, _, _])
 }
 
 /// Reads up to eight 16-bit groups, with at most one `::` standing for zero groups.
@@ -915,6 +948,39 @@ mod tests {
     }
 
     #[test]
+    fn ipv4_mapped_addresses_are_denied_in_both_spellings() {
+        // RFC 5952 §4 compresses and writes hex; §5 recommends the dotted form for a
+        // well-known IPv4-embedding prefix. Two recommendations, two spellings, no one
+        // canonical text, so neither is accepted. Denying both is a tightening; making
+        // the dotted one the accepted spelling would widen the rule and need a new caveat kind.
+        for literal in [
+            "[::ffff:7f00:1]",
+            "[::ffff:127.0.0.1]",
+            "[::ffff:c000:201]",
+            "[::ffff:192.0.2.1]",
+            "[::ffff:0:0]",
+        ] {
+            assert_eq!(host_of(literal), Err(Denial::MalformedHost), "{literal:?}");
+        }
+    }
+
+    #[test]
+    fn only_the_mapped_prefix_itself_is_denied() {
+        // The rule is `::ffff:0:0/96` and nothing around it: one bit off the prefix,
+        // and the address is an ordinary one with one RFC 5952 spelling again. The
+        // NAT64 prefix is a well-known IPv4-embedding prefix too, but Rust and Python
+        // both write it in hex, so nothing disagrees about it and it stays accepted.
+        for literal in [
+            "[64:ff9b::c000:201]",
+            "[::fffe:7f00:1]",
+            "[1::ffff:7f00:1]",
+            "[::1:ffff:7f00:1]",
+        ] {
+            assert_eq!(host_of(literal), Ok(literal.to_string()), "{literal:?}");
+        }
+    }
+
+    #[test]
     fn a_dotted_quad_is_an_ordinary_host() {
         for host in [
             "192.0.2.1",
@@ -1415,26 +1481,123 @@ mod tests {
         }
     }
 
+    // --- byte classes, closed over all 256 values ----------------------------------
+
+    // Three rules below are stated as a byte *class*: which bytes a path may carry as
+    // themselves, which bytes an RFC 9110 token may hold, and which bytes a host name
+    // may hold. A hand-picked sample of bytes cannot see a class that has quietly
+    // gained or lost a member, so each test here loops over all 256 values.
+    //
+    // Each oracle is written as an explicit table in ASCII order. That is on purpose:
+    // the rules themselves are written as `is_ascii_*` plus a `matches!` arm, so a
+    // find-and-replace edit to a rule cannot also rewrite the oracle it is checked
+    // against. An oracle spelled the same way as its rule silently agrees with
+    // whatever the rule becomes.
+
+    /// RFC 3986 `pchar` plus `/`, minus `;`, written out. `?` is in the table because
+    /// it is not a path byte at all: it starts the query, so `/a?b` is the accepted
+    /// target `/a`.
+    const PATH_BYTE_OR_QUERY: &[u8] =
+        b"!$&'()*+,-./0123456789:=?@ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz~";
+
+    /// RFC 9110 §5.6.2 `tchar`, written out.
+    const TOKEN_BYTE: &[u8] =
+        b"!#$%&'*+-.0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ^_`abcdefghijklmnopqrstuvwxyz|~";
+
+    /// The bytes a host name may hold, written out.
+    const HOST_NAME_BYTE: &[u8] = b"-.0123456789_abcdefghijklmnopqrstuvwxyz";
+
+    /// Whether a raw path is accepted. `path_of` takes text; these tests need bytes.
+    fn accepts_path(path: &[u8]) -> bool {
+        canonicalize(&RequestFacts {
+            method: b"GET",
+            scheme: b"https",
+            authority: b"example.com",
+            path,
+        })
+        .is_ok()
+    }
+
+    /// Whether a raw method is accepted.
+    fn accepts_method(method: &[u8]) -> bool {
+        canonicalize(&RequestFacts {
+            method,
+            scheme: b"https",
+            authority: b"example.com",
+            path: b"/a",
+        })
+        .is_ok()
+    }
+
+    /// Whether a raw authority is accepted.
+    fn accepts_authority(authority: &[u8]) -> bool {
+        canonicalize(&RequestFacts {
+            method: b"GET",
+            scheme: b"https",
+            authority,
+            path: b"/a",
+        })
+        .is_ok()
+    }
+
     #[test]
-    fn canonical_fields_never_contain_the_token_separators() {
-        // The token format needs no escaping because no canonical field can hold `;`
-        // or a space. Pin that for every byte value, appended to every text field.
+    fn a_path_holds_exactly_the_plain_bytes_the_rule_names() {
+        for byte in 0u8..=255 {
+            let path = [b'/', b'a', byte, b'b'];
+            assert_eq!(
+                accepts_path(&path),
+                PATH_BYTE_OR_QUERY.contains(&byte),
+                "path byte {byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_method_holds_exactly_the_rfc_9110_token_bytes() {
+        for byte in 0u8..=255 {
+            let method = [b'G', byte, b'T'];
+            assert_eq!(
+                accepts_method(&method),
+                TOKEN_BYTE.contains(&byte),
+                "method byte {byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_host_name_holds_exactly_the_bytes_the_rule_names() {
+        for byte in 0u8..=255 {
+            let authority = [b'a', byte, b'b'];
+            assert_eq!(
+                accepts_authority(&authority),
+                HOST_NAME_BYTE.contains(&byte),
+                "host byte {byte:#04x}"
+            );
+        }
+    }
+
+    #[test]
+    fn canonical_fields_are_printable_ascii_only() {
+        // A token is one line of printable ASCII carried in an HTTP header value, so a
+        // canonical field may never hold a control byte, a space, a `;` or anything
+        // above 0x7E. Pin it for every byte value, appended to every text field in
+        // turn.
         for byte in 0u8..=255 {
             let method = [b"GET".as_slice(), &[byte]].concat();
             let authority = [b"example.com".as_slice(), &[byte]].concat();
-            let path = [b"/".as_slice(), &[byte]].concat();
+            let path = [b"/a".as_slice(), &[byte]].concat();
             let requests = [
                 RequestFacts {
                     method: &method,
                     scheme: b"https",
                     authority: b"example.com",
-                    path: b"/",
+                    path: b"/a",
                 },
                 RequestFacts {
                     method: b"GET",
                     scheme: b"https",
                     authority: &authority,
-                    path: b"/",
+                    path: b"/a",
                 },
                 RequestFacts {
                     method: b"GET",
@@ -1446,8 +1609,10 @@ mod tests {
             for raw in requests {
                 if let Ok(target) = http(&raw) {
                     let authority = target.authority();
-                    for text in [target.method(), &authority, target.path()] {
-                        assert!(!text.contains(';') && !text.contains(' '), "{text:?}");
+                    for text in [target.method(), target.scheme(), &authority, target.path()] {
+                        for byte in text.bytes() {
+                            assert!((0x21..=0x7E).contains(&byte), "{text:?} holds {byte:#04x}");
+                        }
                     }
                 }
             }

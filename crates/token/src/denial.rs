@@ -33,8 +33,8 @@ pub enum Denial {
     /// a trailing dot, uses a byte a host may not have (anything but lowercase ASCII
     /// letters, digits, `-`, `_`, `.`, or a bracketed IPv6 literal, so uppercase is
     /// denied, not folded), ends in a number without being a dotted quad (`127.1`,
-    /// `0x7f.0.0.1`), or is an IPv6 literal not in RFC 5952 form (`[0::1]`,
-    /// `[2001:DB8::1]`).
+    /// `0x7f.0.0.1`), is an IPv6 literal not in RFC 5952 form (`[0::1]`,
+    /// `[2001:DB8::1]`), or is an IPv4-mapped IPv6 literal.
     MalformedHost,
     /// The port is empty, zero, has a leading zero, is not all digits, is above
     /// 65535, or is the scheme's default written out (`:443` on https, `:80` on http).

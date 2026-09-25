@@ -35,15 +35,31 @@ pub struct RequestFacts<'a> {
 /// One variant per kind of destination. Today there is one kind, an HTTP request
 /// ([`HttpTarget`]); a later kind (for example a JSON-RPC operation or a queue topic)
 /// is a new variant, and the token format already tags each caveat with its kind, so
-/// adding one does not change how `v1` tokens are read. `#[non_exhaustive]` so adding a
-/// variant does not break callers.
+/// adding one does not change how `v1` tokens are read.
 ///
 /// There is no public way to build one except [`crate::canonicalize`], so every target
 /// in the system came out of the one canonicalizer.
+///
+/// **`#[non_exhaustive]` is on the enum *and* on the variant, and the two do different
+/// jobs.** On the enum it stops a downstream `match` from being exhaustive, so adding a
+/// variant later is not a breaking change. It does **not** stop anyone from building a
+/// variant they can already name: `Target::Http(payload)` compiles fine in a downstream
+/// crate against an enum-level attribute alone. Only the attribute on the variant closes
+/// that, and construction from outside then fails with `error[E0603]: tuple variant
+/// `Http` is private` (see the note on the `tests` module).
+///
+/// Today that gap is small, because `HttpTarget` has private fields, no public
+/// constructor, no `Default`, no `From` and no deserializer, so an outside crate can only
+/// clone a target the canonicalizer already produced and re-wrap it. It does not stay
+/// small: the growth path written above is "a later kind is a new variant", and the first
+/// variant whose payload a caller can build would turn this into a forged target with no
+/// compile error anywhere. The attribute is here so that variant cannot be added by
+/// accident.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum Target {
     /// An HTTP request: method, scheme, host, port and path.
+    #[non_exhaustive]
     Http(HttpTarget),
 }
 
@@ -143,5 +159,68 @@ pub(crate) mod test_support {
             authority: authority.as_bytes(),
             path: path.as_bytes(),
         }
+    }
+}
+
+/// Unit tests for the target types.
+///
+/// **The one property that matters most here cannot be tested from inside this crate,
+/// and is recorded rather than asserted.** `Target::Http(..)` must not be buildable by
+/// a downstream crate, but inside the defining crate `#[non_exhaustive]` has no effect
+/// at all, so no test in this file can see the difference. Testing it needs a
+/// *compile-fail* test — code that must not compile — and every crate that does that
+/// (`trybuild` and friends) pulls in `serde_derive`, a proc-macro, which the
+/// no-build-scripts, no-proc-macros rule forbids for these crates and their tests.
+/// One property is not worth widening the dependency policy, so here is the check,
+/// written out to be run by hand when `Target` changes:
+///
+/// ```text
+/// # anywhere outside this workspace:
+/// cargo new --lib forge && cd forge
+/// # Cargo.toml: add an empty [workspace] table, then
+/// #   token = { path = "<repo>/crates/token" }
+/// # src/lib.rs:
+/// #   use token::{canonicalize, RequestFacts, Target};
+/// #   pub fn forge() -> Target {
+/// #       let real = canonicalize(&RequestFacts {
+/// #           method: b"GET", scheme: b"https", authority: b"example.com", path: b"/a",
+/// #       }).unwrap();
+/// #       Target::Http(real.as_http().unwrap().clone())
+/// #   }
+/// cargo build
+/// ```
+///
+/// It must fail with:
+///
+/// ```text
+/// error[E0603]: tuple variant `Http` is private
+///    |
+///    | #[non_exhaustive]
+///    | ----------------- cannot be constructed because it is `#[non_exhaustive]`
+/// ```
+///
+/// With `#[non_exhaustive]` on the enum alone this would build, so the attribute is on the
+/// variant too.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::canonicalize;
+
+    #[test]
+    fn the_canonicalizer_is_the_way_in_and_as_http_is_the_way_out() {
+        let target = canonicalize(&test_support::facts(
+            "GET",
+            "https",
+            "example.com",
+            "/a?x=1",
+        ))
+        .unwrap();
+        let http = target.as_http().unwrap();
+        assert_eq!(http.method(), "GET");
+        assert_eq!(http.authority(), "example.com");
+        assert_eq!(http.path(), "/a");
+        // Re-wrapping is what a downstream crate cannot do; inside this crate it is
+        // ordinary code, which is exactly why the module comment above exists.
+        assert_eq!(Target::Http(http.clone()), target);
     }
 }

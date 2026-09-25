@@ -698,6 +698,14 @@ fn an_accepted_host_name_is_already_in_its_one_spelling() {
 /// from `is_canonical_ipv6` comparing against `write_ipv6`, which is code, not a claim
 /// proved here.
 ///
+/// **The IPv4-mapped prefix is assumed away.** `::ffff:0:0/96` has two recommended text
+/// forms (RFC 5952 §4 and §5), so the canonicalizer denies it in both rather than
+/// picking one ([`is_ipv4_mapped`]). For those addresses `write_ipv6` still writes a
+/// text, and that text still reads back to the same address, but it is no longer
+/// *accepted*, so the second assertion below would be false for them. They are assumed
+/// out rather than special-cased, because the claim this harness makes is about the
+/// addresses the canonicalizer accepts at all.
+///
 /// **Status: does not finish.** [`write_ipv6`] calls `format!("{group:x}")` eight times and
 /// joins the results through a `Vec<String>`, so this is roughly eight times the
 /// `core::fmt` work of
@@ -709,6 +717,7 @@ fn an_accepted_host_name_is_already_in_its_one_spelling() {
 #[kani::unwind(24)]
 fn every_ipv6_address_has_exactly_one_accepted_spelling() {
     let groups: [u16; 8] = kani::any();
+    kani::assume(!is_ipv4_mapped(&groups));
     let text = write_ipv6(&groups);
 
     assert!(

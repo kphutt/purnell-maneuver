@@ -1725,7 +1725,7 @@
     },
     {
       "name": "disagree_ipv6_embedded_ipv4",
-      "note": "Mixed notation; WHATWG writes it as [::ffff:c000:201]. Denied rather than choosing.",
+      "note": "Mixed notation; WHATWG writes it as [::ffff:c000:201]. Denied rather than choosing between the two. Every address under the IPv4-mapped prefix ::ffff:0:0/96 is denied in both its spellings, because RFC 5952 sections 4 and 5 recommend different text for it (see attack_ipv6_mapped_loopback).",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -3027,8 +3027,8 @@
       }
     },
     {
-      "name": "attack_accepted_ipv6_mapped_loopback",
-      "note": "RFC 5952 4. ACCEPTED: this is the one canonical spelling of the IPv4-mapped loopback, so it is kept. The dotted spelling of the same address, [::ffff:127.0.0.1], denies (see host_ipv6_embedded_ipv4), which is a split, not a merge: one address has one accepted target and one rejected spelling.",
+      "name": "attack_ipv6_mapped_loopback",
+      "note": "SSRF host lists: the IPv4-mapped loopback is a common stand-in for 127.0.0.1. RFC 5952 gives this address TWO recommended spellings: section 4 compresses zero groups and writes hex, giving [::ffff:7f00:1], and section 5 recommends the mixed, dotted notation for an address with a well-known IPv4-embedding prefix such as ::ffff:0:0/96, giving [::ffff:127.0.0.1]. Section 5 is the one real software follows: Rust's std::net::Ipv6Addr and Python's ipaddress both serialise this prefix in dotted form, so an adapter that reads :authority through its language's IP type and writes it back emits the spelling section 4 rejects. Accepting the dotted form would widen a rule and need a new caveat kind, so both spellings deny instead, which is a tightening and safe in place. See host_ipv6_mapped_loopback_dotted for the other spelling.",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -3036,13 +3036,7 @@
         "path": "/admin"
       },
       "expected": {
-        "target": {
-          "method": "GET",
-          "scheme": "https",
-          "host": "[::ffff:7f00:1]",
-          "port": 443,
-          "path": "/admin"
-        }
+        "denial": "malformed_host"
       }
     },
     {
@@ -3290,6 +3284,142 @@
           "method": "GET",
           "scheme": "https",
           "host": "[::]",
+          "port": 443,
+          "path": "/admin"
+        }
+      }
+    },
+    {
+      "name": "path_bare_cr",
+      "note": "A token is one line of printable ASCII carried in an HTTP header value, so a CR inside a canonical field is a header-injection primitive: it would split the header the token rides in. Published CRLF payload lists carry the encoded form (%0d%0a), which this canonicalizer already denies as an encoded control byte; the raw byte is the one that actually reaches a header, and it is denied here as a byte no path may carry as itself.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a\rb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "path_bare_crlf",
+      "note": "The full injection: a raw CRLF followed by a header of the attacker's choosing. Denied for the same reason as the case above, and twice over, since a space is not a path byte either.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a\r\nX-Evil: 1"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "method_bare_cr",
+      "note": "The same header-injection primitive in the method, which is written into the token ahead of the scheme. CR is not an RFC 9110 token byte (RFC 9110 5.6.2), so it denies.",
+      "request": {
+        "method": "GET\rXEvil",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "method_del",
+      "note": "DEL (0x7F) is a control byte and not an RFC 9110 token byte. It sits just past the printable ASCII range, so a rule written as a range rather than as the token set can let it through.",
+      "request": {
+        "method": "GET\u007f",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "method_not_a_token_byte",
+      "note": "'@' and '[' are legal in a URI but are not RFC 9110 token bytes (RFC 9110 5.6.2). A method that is not a token would become a sealable destination: whatever bytes the method holds are written into the token verbatim, so anything accepted here is something a caveat can name.",
+      "request": {
+        "method": "GET@[",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/a"
+      },
+      "expected": {
+        "denial": "malformed_method"
+      }
+    },
+    {
+      "name": "host_backslash",
+      "note": "WHATWG rewrites '\\' to '/' in a special-scheme URL (url.spec.whatwg.org, the 'special authority ignore slashes state'), so a client and the gate disagree about where the authority ends: the client reads 'evil.com\\good.com' as host evil.com with path /good.com. A host name may hold only lowercase letters, digits, '-', '_' and '.', so it denies.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "evil.com\\good.com",
+        "path": "/a"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_query_byte",
+      "note": "A '?' in the authority means something upstream handed over a whole URL rather than the authority. It is not a host-name byte, so it denies rather than being split off as a query the way the path's '?' is.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com?x=1",
+        "path": "/a"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_sub_delims",
+      "note": "RFC 3986 3.2.2 allows sub-delims ('!$&'()*+,;=') in a generic URI authority, but none of them can appear in a DNS name (RFC 1035 2.3.1). Reading the authority with a generic URI grammar rather than a host-name grammar would accept all of these.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "a!b$c&d(e)f+g=h.example",
+        "path": "/a"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6_mapped_loopback_dotted",
+      "note": "The RFC 5952 section 5 spelling of the same address as attack_ipv6_mapped_loopback, and the one Rust and Python emit. Denied, so the rule does not depend on which of the two recommendations a client's IP library happens to follow. This costs a false denial for every IPv4-mapped literal; that is the accepted cost, and it is the same cost in either spelling.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[::ffff:127.0.0.1]",
+        "path": "/admin"
+      },
+      "expected": {
+        "denial": "malformed_host"
+      }
+    },
+    {
+      "name": "host_ipv6_nat64_prefix_kept",
+      "note": "A holding case, so the rule above is not stretched to the neighbouring family later. 64:ff9b::/96 (RFC 6052 section 2.1) is a well-known IPv4-embedding prefix too, and this address carries 192.0.2.1 inside it. But Rust's std::net::Ipv6Addr and Python's ipaddress both leave it in hex, so no parser disagrees about how to write it and there is exactly one RFC 5952 spelling. ACCEPTED: nothing here needs deciding, so nothing is denied.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "[64:ff9b::c000:201]",
+        "path": "/admin"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "[64:ff9b::c000:201]",
           "port": 443,
           "path": "/admin"
         }
