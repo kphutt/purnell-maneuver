@@ -17,7 +17,10 @@
 //! kind      = 1*( %x61-7A / DIGIT / "-" )   ; lowercase letters, digits, "-"
 //! body      = http-body / mcp-body          ; one per kind this build knows
 //! http-body = method SP scheme SP authority SP path
-//! mcp-body  = http-body SP mcp-method SP mcp-name
+//! mcp-body  = http-body SP mcp-value SP mcp-value
+//! mcp-value = 1*( plain / escape )
+//! plain     = %x21-24 / %x26-3A / %x3C-7E    ; printable ASCII, no SP, "%" or ";"
+//! escape    = "%20" / "%25" / "%3B"          ; the three bytes a body cannot hold
 //! ```
 //!
 //! For example, a token allowing two destinations:
@@ -66,15 +69,19 @@
 //! - Each field is exactly what the canonicalizer produces for it. The authority is the
 //!   host, plus `:port` only when the port is not the scheme's default, which is the
 //!   one spelling the canonicalizer accepts back. An `mcp` caveat is an `http` caveat's
-//!   four fields followed by the two MCP header values, in that order, because an MCP
-//!   call is an HTTP request plus the operation it names.
+//!   four fields followed by the two MCP values, in that order, because an MCP call is
+//!   an HTTP request plus the operation it names. Those two are the only fields whose
+//!   stored spelling is not the spelling they arrived in: the canonicalizer
+//!   percent-encodes a space, a `%` and a `;` on the way in, and reads that spelling
+//!   back on the way out, so the separators below stay separators.
 //! - Caveats are in ascending order with no repeats, so a caveat set has exactly one
 //!   token. A token with zero caveats (`v1`) is valid and allows nothing.
-//! - No escaping is needed: `;` and space never appear in a canonical field (a method
-//!   is an RFC 9110 token, which excludes both; a host is letters, digits, `-`, `_`,
-//!   `.` or a bracketed IPv6 literal; a port is digits; a path denies `;` and has
-//!   spaces percent-encoded; an MCP value is visible ASCII other than `;`). Every byte
-//!   is printable ASCII, so the token fits in an HTTP header value.
+//! - Nothing here escapes anything: `;` and space never appear in a canonical field by
+//!   the time it is written (a method is an RFC 9110 token, which excludes both; a host
+//!   is letters, digits, `-`, `_`, `.` or a bracketed IPv6 literal; a port is digits; a
+//!   path denies `;` and has spaces percent-encoded; an MCP value is stored
+//!   percent-encoded, which is the canonicalizer's rule and not this module's). Every
+//!   byte is printable ASCII, so the token fits in an HTTP header value.
 //! - The token has no flags, modes, wildcards or options. It only lists destinations,
 //!   plus (in `v2`) the id of the run it was sealed for, which nothing that checks it
 //!   can read. It never changes how it is checked. The kind says what a caveat
@@ -94,7 +101,8 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use crate::{canonicalize, CaveatSet, Denial, HttpTarget, McpFacts, RequestFacts, Target};
+use crate::canonical::canonicalize_stored;
+use crate::{CaveatSet, Denial, HttpTarget, McpFacts, RequestFacts, Target};
 
 /// The longest token accepted, in bytes. Checked before the token is read.
 /// 8 KiB fits in a single HTTP header on common servers and proxies.
@@ -224,6 +232,12 @@ impl<'a> Presented<'a> {
 const HTTP_KIND: &[u8] = b"http";
 
 /// The kind tag of an MCP caveat.
+///
+/// **A kind names the rules its body is read under**, and [`Caveats`] carries no version
+/// tag on purpose, so `decode` has no version to branch on: the kind is the only thing
+/// that pins those rules. Once tokens are in use, a change to what an `mcp`
+/// body *means* — the storage encoding is exactly such a change — is a new kind rather
+/// than a new version. No tokens are in use yet.
 const MCP_KIND: &[u8] = b"mcp";
 
 /// Why a caveat set could not be sealed into a token.
@@ -420,6 +434,11 @@ fn decode_caveat(piece: &[u8]) -> Result<Target, Denial> {
 /// Reads a caveat body's fields back through the canonicalizer's rules: four fields for
 /// an `http` caveat, six for an `mcp` one. The format knows only where the fields are;
 /// every rule about what may be in them stays in `canonical.rs`.
+///
+/// It reads them through [`canonicalize_stored`], not `canonicalize`: these are bytes a
+/// caveat body holds, and an MCP value's stored spelling is percent-encoded where its
+/// wire spelling is base64-wrapped. For every other field, and for a whole `http`
+/// caveat, the two are the same function.
 fn decode_body(body: &[u8], is_mcp: bool) -> Result<Target, Denial> {
     let mut fields = body.split(|&byte| byte == FIELD_SEPARATOR);
     let (Some(method), Some(scheme), Some(authority), Some(path)) =
@@ -441,7 +460,7 @@ fn decode_body(body: &[u8], is_mcp: bool) -> Result<Target, Denial> {
     if fields.next().is_some() {
         return Err(Denial::MalformedToken);
     }
-    canonicalize(&RequestFacts {
+    canonicalize_stored(&RequestFacts {
         method,
         scheme,
         authority,
@@ -454,8 +473,8 @@ fn decode_body(body: &[u8], is_mcp: bool) -> Result<Target, Denial> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::learn;
     use crate::target::test_support::{facts, mcp_facts};
+    use crate::{canonicalize, learn};
     use alloc::format;
     use alloc::vec;
 
@@ -924,6 +943,30 @@ mod tests {
         );
     }
 
+    /// A value carrying a space or a `;` is expressible, and has exactly one stored
+    /// spelling.
+    #[test]
+    fn a_value_with_a_separator_seals_and_reads_back() {
+        for (wire, stored) in [
+            ("us west 1", "us%20west%201"),
+            ("file:///a;b", "file:///a%3Bb"),
+            ("a%20b", "a%2520b"),
+        ] {
+            let target = call("tools/call", wire);
+            let token = sealed(core::slice::from_ref(&target));
+            assert_eq!(
+                token,
+                format!("v1;mcp POST https mcp.example.com /mcp tools/call {stored}"),
+                "{wire:?}"
+            );
+            assert_eq!(token_lists(token.as_bytes(), &target), Ok(true), "{wire:?}");
+            // The stored spelling is not a wire spelling: sent as one it is a different
+            // value, and the caveat does not list it.
+            let other = call("tools/call", stored);
+            assert_eq!(token_lists(token.as_bytes(), &other), Ok(false), "{wire:?}");
+        }
+    }
+
     /// The headline the kind exists for: at HTTP depth these two requests are the same
     /// bytes, and at MCP depth they are two destinations.
     #[test]
@@ -998,7 +1041,8 @@ mod tests {
         // Hand-written, and each one is not what `seal` would write.
         assert_denied(
             &[
-                // The wrong number of fields, either way.
+                // The wrong number of fields, either way. A space still ends a field,
+                // which is exactly why a value carrying one is stored encoded.
                 "v1;mcp POST https mcp.example.com /mcp",
                 "v1;mcp POST https mcp.example.com /mcp tools/call",
                 "v1;mcp POST https mcp.example.com /mcp tools/call get_document extra",
@@ -1009,10 +1053,15 @@ mod tests {
                 "v1;mcp POST https MCP.example.com /mcp tools/call get_document",
                 "v1;mcp POST https mcp.example.com:443 /mcp tools/call get_document",
                 "v1;mcp POST https mcp.example.com /m%63p tools/call get_document",
-                // And the MCP half runs through every MCP rule.
-                "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?Z2V0X2RvY3VtZW50?=",
-                "v1;mcp POST https mcp.example.com /mcp tools/call =?BASE64?Zm9v?=",
-                "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?PT9CQVNFNjQ_Wm05dj89?=",
+                // And the MCP half runs through every rule about a *stored* value: an
+                // empty one, a byte encoded that did not have to be, lowercase hex, and
+                // an escape that names nothing.
+                "v1;mcp POST https mcp.example.com /mcp tools/call ",
+                "v1;mcp POST https mcp.example.com /mcp  get_document",
+                "v1;mcp POST https mcp.example.com /mcp tools/call get%5Fdocument",
+                "v1;mcp POST https mcp.example.com /mcp tools/call get%3bdocument",
+                "v1;mcp POST https mcp.example.com /mcp tools/call get%2",
+                "v1;mcp POST https mcp.example.com /mcp tools/call get%ZZdocument",
             ],
             Denial::MalformedToken,
         );
@@ -1027,15 +1076,25 @@ mod tests {
             token_lists(shouting.as_bytes(), &call("TOOLS/CALL", "get_document")),
             Ok(true)
         );
-        // A value that reads as a wrapper travels wrapped, and reads back byte for byte.
-        let wrapped =
-            "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?PT9CQVNFNjQ/Wm05dj89?=";
+        // The sentinel is a *wire* spelling and never reaches a caveat body. A value
+        // that reads as a wrapper travels wrapped and is stored as the value itself,
+        // and the wrapper's own bytes are an ordinary different value.
+        let stored = "v1;mcp POST https mcp.example.com /mcp tools/call =?BASE64?Zm9v?=";
         assert_eq!(
             token_lists(
-                wrapped.as_bytes(),
+                stored.as_bytes(),
                 &call("tools/call", "=?base64?PT9CQVNFNjQ/Wm05dj89?=")
             ),
             Ok(true)
+        );
+        let wrapper_as_a_value =
+            "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?PT9CQVNFNjQ/Wm05dj89?=";
+        assert_eq!(
+            token_lists(
+                wrapper_as_a_value.as_bytes(),
+                &call("tools/call", "=?base64?PT9CQVNFNjQ/Wm05dj89?=")
+            ),
+            Ok(false)
         );
     }
 

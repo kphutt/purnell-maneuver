@@ -7,7 +7,16 @@
 //! numeric hosts), plus raw random bytes up to and past every limit.
 //!
 //! - **Idempotence**: writing a target back as a request and canonicalizing it again
-//!   gives the same target, and writing that back gives the same bytes.
+//!   gives the same target, and writing that back gives the same bytes. For an MCP
+//!   target, "as a request" means the wire spelling: a target holds an MCP value the
+//!   way a caveat body stores it (percent-encoded), and `wire_spelling` here undoes
+//!   that and puts the value back inside MCP's base64 sentinel when MCP leaves it no
+//!   plain spelling. That reversal is written out in this file as its own code, so it
+//!   is an oracle and not a second call into the rule.
+//! - **Round trip through a token**: every accepted target seals into a token, reads
+//!   back through the format's byte-for-byte write-back check, and lists the request it
+//!   came from. This is what makes the storage encoding safe: a stored value that did
+//!   not read back would deny the whole token.
 //! - **No merge**: if two requests get the same target, their method, scheme, host and
 //!   path bytes are identical (nothing is case-folded), and their ports are equal (an
 //!   absent port counting as the scheme's default). The query is the one named
@@ -16,8 +25,10 @@
 //! - **Totality and bounded cost**: any bytes, up to and past the limits, give a target
 //!   or a named denial, never a panic, and a target is never longer than the limits.
 //! - **One value, one spelling** (the `mcp` kind): no two accepted `Mcp-Method` or
-//!   `Mcp-Name` byte strings stand for the same value. That is the same no-merge rule
-//!   one layer in, where MCP's base64 wrapper would otherwise give one value two names.
+//!   `Mcp-Name` wire spellings stand for the same value, and no two values share a
+//!   stored spelling. That is the same no-merge rule one layer in, where MCP's base64
+//!   wrapper and this build's storage encoding could each otherwise give one value two
+//!   names, or two values one name.
 //!
 //! Half the hostile requests carry MCP header values as well, so every invariant sees
 //! both kinds of target.
@@ -37,9 +48,11 @@
 use std::collections::BTreeMap;
 
 use gate::{
-    observe, Denial, HttpTarget, McpFacts, RequestFacts, Target, MAX_AUTHORITY_BYTES,
-    MAX_MCP_METHOD_BYTES, MAX_MCP_NAME_BYTES, MAX_METHOD_BYTES, MAX_PATH_BYTES, MAX_SCHEME_BYTES,
+    check, observe, present, Denial, HttpTarget, McpFacts, RequestFacts, Target,
+    MAX_AUTHORITY_BYTES, MAX_MCP_METHOD_BYTES, MAX_MCP_NAME_BYTES, MAX_METHOD_BYTES,
+    MAX_PATH_BYTES, MAX_SCHEME_BYTES,
 };
+use seal::{learn, seal};
 
 /// How many hostile requests each invariant sees. A few seconds in a debug build.
 const HOSTILE_ROUNDS: usize = 200_000;
@@ -134,13 +147,26 @@ const MCP_VALUES: &[&str] = &[
     // "=?BASE64?Zm9v?=" wrapped: it reads as a wrapper, so this is its one spelling.
     "=?base64?PT9CQVNFNjQ/Wm05dj89?=",
     "=?base64?PT9CQVNFNjQ/Wm05dj89?=",
+    // The spellings the storage encoding is for: a conforming value carrying a space,
+    // a `;` or a literal `%`. Each is accepted plain and stored percent-encoded, and
+    // the last pair are two values that must never collapse into one stored spelling.
+    "get document",
+    "us west 1",
+    "file:///a;b",
+    "a%20b",
+    "a b",
+    "100%",
+    // " get_document" and "get_document ", wrapped: leading and trailing whitespace is
+    // MCP's own trigger, so the wrapper is the one spelling each of these has.
+    "=?base64?IGdldF9kb2N1bWVudA==?=",
+    "=?base64?Z2V0X2RvY3VtZW50IA==?=",
     // Denied spellings. The unit tests cover these exhaustively; here they are just
     // enough to keep the accepted set meaningful.
     "",
-    "get document",
-    "get;document",
     " get_document",
+    "get_document ",
     "caf\u{e9}",
+    "get\tname",
     // "get_document" wrapped: canonical base64, but it needed no wrapping.
     "=?base64?Z2V0X2RvY3VtZW50?=",
     // "get document" and "get;document" wrapped: the separators, smuggled.
@@ -236,7 +262,8 @@ fn parts(target: &Target) -> (&HttpTarget, Option<(&str, &str)>) {
     }
 }
 
-/// The request a target writes back to, for the idempotence test.
+/// The request a target writes back to, for the idempotence test. An MCP value comes
+/// out of a target in its *stored* spelling, so it goes back through `wire_spelling`.
 fn written_back(target: &Target) -> Hostile {
     let (http, mcp) = parts(target);
     Hostile {
@@ -246,8 +273,66 @@ fn written_back(target: &Target) -> Hostile {
             http.authority(),
             http.path().to_string(),
         ],
-        mcp: mcp.map(|(method, name)| [method.to_string(), name.to_string()]),
+        mcp: mcp.map(|(method, name)| [wire_spelling(method), wire_spelling(name)]),
     }
+}
+
+/// The wire spelling of a stored MCP value: undo this build's storage encoding, then
+/// put the value back inside MCP's base64 sentinel when MCP leaves it no plain spelling
+/// (leading or trailing whitespace, or a value that reads as a wrapper).
+///
+/// Written out here as its own code, deliberately. It is the inverse of a rule in
+/// `canonical.rs`, and an "inverse" that called back into that file would agree with
+/// whatever the rule became.
+fn wire_spelling(stored: &str) -> String {
+    let value = percent_decode(stored);
+    let reads_as_a_wrapper = value.len() >= 4 && value.starts_with("=?") && value.ends_with("?=");
+    if value.starts_with(' ') || value.ends_with(' ') || reads_as_a_wrapper {
+        format!("=?base64?{}?=", base64_encode(value.as_bytes()))
+    } else {
+        value
+    }
+}
+
+/// Every `%XX` read as the byte it names, everything else as itself. The caller only
+/// ever passes a stored spelling, which the canonicalizer has already accepted.
+fn percent_decode(stored: &str) -> String {
+    let bytes = stored.as_bytes();
+    let mut value = String::new();
+    let mut at = 0;
+    while at < bytes.len() {
+        if bytes[at] == b'%' && at + 3 <= bytes.len() {
+            let byte = u8::from_str_radix(&stored[at + 1..at + 3], 16).unwrap_or_else(|_| {
+                panic!("a stored value's escape is two hex digits: {stored:?}")
+            });
+            value.push(char::from(byte));
+            at += 3;
+        } else {
+            value.push(char::from(bytes[at]));
+            at += 1;
+        }
+    }
+    value
+}
+
+/// Standard-alphabet base64, padded: what MCP's sentinel carries.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut text = String::new();
+    for chunk in bytes.chunks(3) {
+        let mut group = [0u8; 3];
+        group[..chunk.len()].copy_from_slice(chunk);
+        let packed = (u32::from(group[0]) << 16) | (u32::from(group[1]) << 8) | u32::from(group[2]);
+        for slot in 0..4 {
+            if slot <= chunk.len() {
+                let digit = (packed >> (18 - 6 * slot)) & 0x3F;
+                text.push(char::from(ALPHABET[digit as usize]));
+            } else {
+                text.push('=');
+            }
+        }
+    }
+    text
 }
 
 /// What the no-merge invariant compares, computed from the raw request alone by a
@@ -278,10 +363,11 @@ fn raw_key(request: &Hostile) -> RawKey {
     )
 }
 
-/// What an MCP header value stands for, read separately from the canonicalizer: the
-/// bytes a base64 wrapper holds, or the value itself. Deliberately permissive, so it is
-/// an oracle rather than a second copy of the rule -- anything the canonicalizer accepts
-/// it reads the same way, and it also reads spellings the canonicalizer denies.
+/// What an MCP header value as it arrived on the wire stands for, read separately from
+/// the canonicalizer: the bytes a base64 wrapper holds, or the value itself.
+/// Deliberately permissive, so it is an oracle rather than a second copy of the rule --
+/// anything the canonicalizer accepts it reads the same way, and it also reads spellings
+/// the canonicalizer denies.
 fn mcp_value_stands_for(raw: &str) -> String {
     let Some(payload) = raw
         .strip_prefix("=?base64?")
@@ -344,6 +430,7 @@ fn idempotence_a_target_written_back_canonicalizes_to_itself() {
                 .unwrap_or_else(|denial| panic!("round {round}: {written:?} denied: {denial:?}"));
             assert_eq!(again, target, "round {round}: {request:?} then {written:?}");
             assert_eq!(written_back(&again), written, "round {round}: {request:?}");
+            assert_stored_form_round_trips(&target, &request, round);
         }
     }
     println!("idempotence: {HOSTILE_ROUNDS} rounds x both kinds, {accepted} accepted");
@@ -351,6 +438,27 @@ fn idempotence_a_target_written_back_canonicalizes_to_itself() {
         accepted > 1_000,
         "the generator must reach accepted requests"
     );
+}
+
+/// The other half of idempotence, and the one the storage encoding needs: a target
+/// seals into a token, the token reads its stored spelling back through the format's
+/// byte-for-byte write-back check, and the request the target came from is allowed.
+///
+/// A stored MCP value that did not read back to the same bytes would deny the whole
+/// token (`MalformedToken`), so this is where a storage encoding that is not exactly
+/// invertible would show up.
+fn assert_stored_form_round_trips(target: &Target, request: &Hostile, round: usize) {
+    let token = seal(&learn(std::slice::from_ref(target)))
+        .unwrap_or_else(|error| panic!("round {round}: {request:?} would not seal: {error:?}"));
+    let presented = present(token.as_bytes())
+        .unwrap_or_else(|denial| panic!("round {round}: {token:?} denied: {denial:?}"));
+    assert!(
+        check(presented.caveats(), &facts(request)).is_ok(),
+        "round {round}: {request:?} sealed to {token:?} and was not allowed back"
+    );
+    // Stable: sealing the same target again gives the same bytes.
+    let again = seal(&learn(std::slice::from_ref(target))).unwrap();
+    assert_eq!(again, token, "round {round}: {request:?} sealed two ways");
 }
 
 #[test]
@@ -491,17 +599,22 @@ fn totality_and_bounded_cost_any_bytes_give_a_bounded_target_or_a_named_denial()
     }
 }
 
-/// One value, one spelling. MCP lets a header value travel plain or base64-wrapped, so
-/// without a rule one destination would have two names -- the merge this project exists
-/// to prevent, one layer in from the URL. The canonicalizer answers it by accepting only
-/// the one spelling MCP leaves open for each value, so this test reads what each
-/// accepted value *stands for* with a separate, deliberately permissive decoder and
-/// requires that no two accepted spellings stand for the same thing.
+/// One value, one spelling, in both directions. MCP lets a header value travel plain or
+/// base64-wrapped, and this build then writes it into a caveat body percent-encoded, so
+/// there are two places one destination could pick up a second name -- the merge this
+/// project exists to prevent, one layer in from the URL. So for every accepted MCP
+/// target this reads what the value that *arrived* stands for, with a separate,
+/// deliberately permissive decoder, and requires two things of the pairing:
+///
+/// - one value is accepted in only one wire spelling, and
+/// - one value has only one stored spelling, and no two values share one.
 #[test]
 fn one_value_one_spelling_no_two_accepted_mcp_values_stand_for_the_same_thing() {
     let mut rng = Rng(0x11CE_11CE_B0B0_0001);
-    // What each value stands for -> the one accepted spelling of it seen so far.
-    let mut seen: BTreeMap<String, String> = BTreeMap::new();
+    // What each value stands for -> (the accepted wire spelling, the stored spelling).
+    let mut seen: BTreeMap<String, (String, String)> = BTreeMap::new();
+    // The other direction: a stored spelling -> the value it was written from.
+    let mut stored_for: BTreeMap<String, String> = BTreeMap::new();
     let mut accepted = 0;
     for round in 0..HOSTILE_ROUNDS {
         let request = hostile(&mut rng);
@@ -511,16 +624,33 @@ fn one_value_one_spelling_no_two_accepted_mcp_values_stand_for_the_same_thing() 
         let (_, Some((method, name))) = parts(&target) else {
             continue;
         };
+        let [raw_method, raw_name] = request.mcp.clone().expect("an MCP target had MCP facts");
         accepted += 1;
-        for value in [method, name] {
-            let stands_for = mcp_value_stands_for(value);
+        for (raw, stored) in [(raw_method, method), (raw_name, name)] {
+            let stands_for = mcp_value_stands_for(&raw);
             match seen.get(&stands_for) {
+                Some((first_raw, first_stored)) => {
+                    assert_eq!(
+                        first_raw, &raw,
+                        "round {round}: {first_raw:?} and {raw:?} both stand for {stands_for:?}"
+                    );
+                    assert_eq!(
+                        first_stored, stored,
+                        "round {round}: {stands_for:?} stored two ways"
+                    );
+                }
+                None => {
+                    seen.insert(stands_for.clone(), (raw, stored.to_string()));
+                }
+            }
+            match stored_for.get(stored) {
                 Some(first) => assert_eq!(
-                    first, value,
-                    "round {round}: {first:?} and {value:?} both stand for {stands_for:?}"
+                    first, &stands_for,
+                    "round {round}: {first:?} and {stands_for:?} share the stored spelling \
+                     {stored:?}"
                 ),
                 None => {
-                    seen.insert(stands_for, value.to_string());
+                    stored_for.insert(stored.to_string(), stands_for);
                 }
             }
         }
@@ -540,8 +670,21 @@ fn one_value_one_spelling_no_two_accepted_mcp_values_stand_for_the_same_thing() 
     // The corpus really does offer two spellings of one value, so the assertion above
     // had something to catch: "=?BASE64?Zm9v?=" is in it plain and wrapped.
     assert_eq!(
-        seen.get("=?BASE64?Zm9v?=").map(String::as_str),
-        Some("=?base64?PT9CQVNFNjQ/Wm05dj89?="),
-        "only the wrapped spelling may be accepted"
+        seen.get("=?BASE64?Zm9v?=")
+            .map(|(raw, stored)| (raw.as_str(), stored.as_str())),
+        Some(("=?base64?PT9CQVNFNjQ/Wm05dj89?=", "=?BASE64?Zm9v?=")),
+        "only the wrapped spelling may be accepted, and it stores as the value itself"
+    );
+    // And the other half: the corpus offers "a b" and the literal "a%20b", two values a
+    // storage encoding that did not escape its own escape would have merged.
+    assert_eq!(
+        seen.get("a b").map(|(_, stored)| stored.as_str()),
+        Some("a%20b"),
+        "a value carrying a space is stored encoded"
+    );
+    assert_eq!(
+        seen.get("a%20b").map(|(_, stored)| stored.as_str()),
+        Some("a%2520b"),
+        "a value carrying the escape itself is stored with it escaped"
     );
 }

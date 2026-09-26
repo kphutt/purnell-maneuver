@@ -1155,6 +1155,76 @@
           "expected": "not_listed"
         }
       ]
+    },
+    {
+      "name": "a_value_with_an_internal_space_is_reachable",
+      "note": "The regression case. A conforming Mcp-Name may carry an internal space, and MCP does not wrap for one, so the plain spelling is what a client sends. It is learned, sealed and allowed back; the gratuitously wrapped spelling of the same value is denied rather than folded onto it, and the stored spelling sent as a wire value is a different destination.",
+      "observed": [
+        {
+          "method": "POST",
+          "scheme": "https",
+          "authority": "mcp.example.com",
+          "path": "/mcp",
+          "mcp": {
+            "method": "tools/call",
+            "name": "us west 1"
+          }
+        }
+      ],
+      "checks": [
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "us west 1"
+            }
+          },
+          "expected": "allowed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "=?base64?dXMgd2VzdCAx?="
+            }
+          },
+          "expected": "malformed_mcp_name"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "us%20west%201"
+            }
+          },
+          "expected": "not_listed"
+        },
+        {
+          "request": {
+            "method": "POST",
+            "scheme": "https",
+            "authority": "mcp.example.com",
+            "path": "/mcp",
+            "mcp": {
+              "method": "tools/call",
+              "name": "us west 2"
+            }
+          },
+          "expected": "not_listed"
+        }
+      ]
     }
   ],
   "bad_tokens": [
@@ -1274,14 +1344,32 @@
     },
     {
       "name": "mcp_value_with_a_space",
-      "note": "A space is the token's field separator, so a caveat body can never hold one; here it reads as a seventh field.",
+      "note": "A space is the token's field separator, so a caveat body can never hold one; here it reads as a seventh field. A value carrying a space is stored percent-encoded ('get%20document'), which is what keeps this true.",
       "token": "v1;mcp POST https mcp.example.com /mcp tools/call get document",
       "expected": "malformed_token"
     },
     {
-      "name": "mcp_value_wrapped_when_it_did_not_need_to_be",
-      "note": "'=?base64?Z2V0X2RvY3VtZW50?=' decodes to 'get_document', which needs no wrapping. One value may have only one spelling, so the wrapped one denies rather than folding onto the plain one.",
-      "token": "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?Z2V0X2RvY3VtZW50?=",
+      "name": "mcp_value_encoded_when_it_did_not_need_to_be",
+      "note": "'%5F' is '_', which a caveat body may hold as itself, so this is a second stored spelling of 'get_document'. Only the three bytes that have to be encoded may appear encoded -- the same rule the path uses to deny %41 for A.",
+      "token": "v1;mcp POST https mcp.example.com /mcp tools/call get%5Fdocument",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "mcp_value_lowercase_hex",
+      "note": "Lowercase hex is a second spelling of one escape, and it is denied here for the same reason the path denies %c3.",
+      "token": "v1;mcp POST https mcp.example.com /mcp tools/call get%3bdocument",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "mcp_value_truncated_escape",
+      "note": "A % must be followed by two hex digits.",
+      "token": "v1;mcp POST https mcp.example.com /mcp tools/call get%2",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "mcp_value_empty",
+      "note": "An empty value is denied in a caveat body exactly as it is on the wire.",
+      "token": "v1;mcp POST https mcp.example.com /mcp tools/call ",
       "expected": "malformed_token"
     },
     {

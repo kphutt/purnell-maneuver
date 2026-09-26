@@ -3616,8 +3616,8 @@
       }
     },
     {
-      "name": "disagree_mcp_name_with_a_space",
-      "note": "A space is the token's field separator, and a conforming Mcp-Name may carry one ('us west 1' travels as a literal header value). Denying is a tightening and a limit for now.",
+      "name": "mcp_name_with_a_space_is_stored_encoded",
+      "note": "A space is the token's field separator, and a conforming Mcp-Name may carry one ('us west 1' travels as a literal header value, because MCP's sentinel is triggered by non-ASCII, a control byte or LEADING or TRAILING whitespace, not by an internal space). It is stored percent-encoded in the caveat body, so the separator never reaches the token and the value still has exactly one stored spelling.",
       "request": {
         "method": "POST",
         "scheme": "https",
@@ -3629,12 +3629,21 @@
         }
       },
       "expected": {
-        "denial": "malformed_mcp_name"
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "get%20document"
+        }
       }
     },
     {
-      "name": "disagree_mcp_name_with_a_semicolon",
-      "note": "';' is the token's caveat separator, and it is legal in a URI path segment, so a resources/read name can carry one. Denied for the same reason as the space.",
+      "name": "mcp_name_with_a_semicolon_is_stored_encoded",
+      "note": "';' is the token's caveat separator, and it is legal in a URI path segment, so a resources/read name can carry one. Stored encoded for the same reason as the space.",
       "request": {
         "method": "POST",
         "scheme": "https",
@@ -3646,7 +3655,16 @@
         }
       },
       "expected": {
-        "denial": "malformed_mcp_name"
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "resources/read",
+          "mcp_name": "file:///a%3Bb"
+        }
       }
     },
     {
@@ -3685,7 +3703,7 @@
     },
     {
       "name": "mcp_name_that_reads_as_a_wrapper_sent_wrapped",
-      "note": "The one legal spelling of the value above. It is stored wrapped, because that is the only way it can travel.",
+      "note": "The one legal spelling of the value above. The wrapper is MCP's WIRE encoding, so it is undone on the way in and what the caveat body stores is the value itself: '=?BASE64?Zm9v?=' needs no escaping, so it is stored as it stands.",
       "request": {
         "method": "POST",
         "scheme": "https",
@@ -3705,7 +3723,7 @@
           "path": "/mcp",
           "authority": "mcp.example.com",
           "mcp_method": "tools/call",
-          "mcp_name": "=?base64?PT9CQVNFNjQ/Wm05dj89?="
+          "mcp_name": "=?BASE64?Zm9v?="
         }
       }
     },
@@ -3830,7 +3848,205 @@
     },
     {
       "name": "mcp_method_malformed_names_its_own_field",
-      "note": "The MCP method is read before the name, so it names the denial.",
+      "note": "The MCP method is read before the name, so it names the denial. A tab is a control byte, which no spelling of a value may carry; a space would not do here any more, because a space is stored encoded rather than denied.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools\tcall",
+          "name": "get\tdocument"
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_method"
+      }
+    },
+    {
+      "name": "mcp_name_internal_space_has_exactly_one_spelling",
+      "note": "The destination that had no legal spelling at all before the caveat body gained a storage encoding: the plain form was denied for its space and the wrapped form for being wrapped when MCP did not require it, so no conforming client could reach it. The plain form is the one spelling, and it is stored percent-encoded.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "us west 1"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "us%20west%201"
+        }
+      }
+    },
+    {
+      "name": "disagree_mcp_name_internal_space_wrapped",
+      "note": "The other half of that: 'us west 1' wrapped. MCP triggers its sentinel on leading or trailing whitespace, never an internal one, so this value did not have to be wrapped and the wrapped spelling is a second name for one operation.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?dXMgd2VzdCAx?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "mcp_name_with_a_percent_is_stored_with_it_escaped",
+      "note": "A literal '%' in a value is escaped in the caveat body too. Without that, the value 'a b' and the value 'a%20b' would both be stored as 'a%20b' -- one stored spelling for two destinations, which is the merge this canonicalizer exists to prevent.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "a%20b"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "a%2520b"
+        }
+      }
+    },
+    {
+      "name": "mcp_name_stored_spelling_sent_as_a_wire_value",
+      "note": "The storage encoding is not a wire encoding, and nothing reads it as one. Sent as a header value, 'us%20west%201' is an ordinary value carrying two literal '%' bytes, and it is a different destination from the value with the spaces in it.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "us%20west%201"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "us%2520west%25201"
+        }
+      }
+    },
+    {
+      "name": "mcp_name_wrapped_because_it_has_a_leading_space",
+      "note": "A value MCP itself requires to be wrapped: leading whitespace is one of its triggers, so ' get_document' has no plain spelling and the wrapper is the only way it travels. The body stores the value the wrapper stood for, encoded.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?IGdldF9kb2N1bWVudA==?="
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "%20get_document"
+        }
+      }
+    },
+    {
+      "name": "disagree_mcp_name_with_a_leading_space_sent_plain",
+      "note": "The same value sent plain. MCP requires the wrapper for leading whitespace, so this spelling is not one a conforming client sends, and accepting it as well would give the value two names.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": " get_document"
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "disagree_mcp_name_the_specs_own_sentinel_example",
+      "note": "MCP's own illustration of the sentinel, '=?base64?Z2V0X3dlYXRoZXI=?=', which decodes to 'get_weather'. That value travels perfectly well as plain ASCII, so MCP does not require the wrapper for it and both spellings would mean one operation; the plain one is the accepted spelling and this one is denied rather than folded onto it.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?Z2V0X3dlYXRoZXI=?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "mcp_name_the_specs_own_sentinel_example_sent_plain",
+      "note": "The accepted spelling of the value above.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "get_weather"
+        }
+      },
+      "expected": {
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools/call",
+          "mcp_name": "get_weather"
+        }
+      }
+    },
+    {
+      "name": "mcp_method_with_a_space_is_stored_encoded",
+      "note": "Both MCP fields are read by one rule, so the method is stored the same way. Real MCP method names carry no space; the case is here so the two fields are not quietly different.",
       "request": {
         "method": "POST",
         "scheme": "https",
@@ -3838,11 +4054,37 @@
         "path": "/mcp",
         "mcp": {
           "method": "tools call",
-          "name": "get document"
+          "name": "get_document"
         }
       },
       "expected": {
-        "denial": "malformed_mcp_method"
+        "target": {
+          "method": "POST",
+          "scheme": "https",
+          "host": "mcp.example.com",
+          "port": 443,
+          "path": "/mcp",
+          "authority": "mcp.example.com",
+          "mcp_method": "tools%20call",
+          "mcp_name": "get_document"
+        }
+      }
+    },
+    {
+      "name": "mcp_name_control_byte_stays_denied_in_both_spellings",
+      "note": "The storage encoding widened the value rule by exactly two bytes, the space and the ';'. A control byte is not one of them: it is denied plain, and denied wrapped, because a caveat body is printable ASCII end to end.",
+      "request": {
+        "method": "POST",
+        "scheme": "https",
+        "authority": "mcp.example.com",
+        "path": "/mcp",
+        "mcp": {
+          "method": "tools/call",
+          "name": "=?base64?Z2V0CW5hbWU=?="
+        }
+      },
+      "expected": {
+        "denial": "malformed_mcp_name"
       }
     }
   ]

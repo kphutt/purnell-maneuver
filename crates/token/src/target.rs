@@ -219,11 +219,20 @@ impl McpTarget {
 
     /// The MCP method, for example `tools/call`. This is the `Mcp-Method` value, not
     /// the HTTP method (which is `self.http().method()`).
+    ///
+    /// **In its stored spelling, which is not always the one that arrived.** These two
+    /// fields are the only ones whose canonical form is not the bytes the server
+    /// received: a value may carry a space, a `;` or a `%`, and a caveat body may not,
+    /// so those three are percent-encoded here (`us west 1` is `us%20west%201`). The
+    /// encoding is exactly invertible and nothing else is touched, so two values never
+    /// share one spelling — but a caller printing this for a person is printing what the
+    /// caveat holds, not what the header said.
     pub fn method(&self) -> &str {
         &self.method
     }
 
-    /// The MCP name, for example `get_document`: the `Mcp-Name` value.
+    /// The MCP name, for example `get_document`: the `Mcp-Name` value, in the same
+    /// stored spelling as [`method`](McpTarget::method).
     pub fn name(&self) -> &str {
         &self.name
     }

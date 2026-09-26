@@ -26,10 +26,13 @@
 //!
 //! **Group 2, the rule layer.** One harness per rule, over the **whole** input domain
 //! that rule can ever see — every byte value, every spelling of a scheme, every port.
-//! These are cheap, they finish in seconds, and several of them are *complete*: not a
-//! bound at all, but the entire domain. They are what a regression gate should run.
-//! Most use `kani::cover!`, so they cannot pass vacuously. The IPv6 round trip does not
-//! land; its own comment says why.
+//! Most are cheap, and several are *complete*: not a bound at all, but the entire
+//! domain. They are what a regression gate should run. Most use `kani::cover!`, so they
+//! cannot pass vacuously.
+//!
+//! Two do not finish, and both say why in their own comments: the IPv6 round
+//! trip, and `a_written_mcp_value_reads_back_unchanged`, which hits the same `String`
+//! cost as group 1.
 //!
 //! **Every harness needs `#[kani::unwind(N)]`, and the value matters more than it
 //! looks.** A slice of symbolic length makes every loop over it unbounded as far as
@@ -426,20 +429,22 @@ fn no_merge_one_target_means_the_same_method_scheme_host_port_and_path() {
 
 /// **Every byte value, through the MCP value rule, in one proof.**
 ///
-/// The `mcp` caveat kind's one new byte class. An `Mcp-Method` or `Mcp-Name` value may
-/// hold exactly the visible ASCII bytes other than `;`, and that single rule is what
-/// keeps the token's two separators out of a caveat body, keeps a control byte or a
-/// non-ASCII byte from reaching a token that has to be printable ASCII, and denies a
-/// leading or trailing space. A sampled test can only show the bytes somebody thought
-/// of; this covers all 256 at once.
+/// The `mcp` caveat kind's two byte classes, and the difference between them is the
+/// whole point. An `Mcp-Method` or `Mcp-Name` **value** may hold exactly the printable
+/// ASCII bytes, the token's two separators included, because a conforming value may
+/// carry either. A **caveat body** may not hold those two, so the value is stored
+/// percent-encoded and the body holds only what is left. A sampled test can only show
+/// the bytes somebody thought of; this covers all 256 at once, in both classes.
 ///
-/// It is stated over a one-byte value, which is the whole class: the rule reads each
-/// byte on its own, and the sentinel rules below it cannot fire on one byte (a value
-/// needs four to carry both markers).
+/// It is stated over a value with the symbolic byte *between* two plain ones, because
+/// a leading or trailing space is MCP's own wrapping trigger and is a rule of its own —
+/// and three bytes is still short enough that the sentinel rules cannot fire (a value
+/// needs four bytes to carry both markers).
 #[kani::proof]
+#[kani::unwind(16)]
 fn every_mcp_value_byte_is_classified_the_way_the_rule_says() {
     let byte: u8 = kani::any();
-    let value = [byte];
+    let value = [b'a', byte, b'b'];
     let request = RequestFacts {
         method: b"POST",
         scheme: b"https",
@@ -450,15 +455,12 @@ fn every_mcp_value_byte_is_classified_the_way_the_rule_says() {
             name: &value,
         }),
     };
-    let accepted = canonicalize(&request).is_ok();
+    let target = canonicalize(&request);
+    let accepted = target.is_ok();
 
     assert!(
-        accepted == (matches!(byte, 0x21..=0x7E) && byte != b';'),
-        "an MCP value holds exactly the visible ASCII bytes other than ';'"
-    );
-    assert!(
-        !accepted || (byte != b' ' && byte != b';'),
-        "neither of the token's separators can reach a caveat body"
+        accepted == matches!(byte, 0x20..=0x7E),
+        "an MCP value holds exactly the printable ASCII bytes"
     );
     assert!(
         !accepted || !byte.is_ascii_control(),
@@ -468,7 +470,95 @@ fn every_mcp_value_byte_is_classified_the_way_the_rule_says() {
         accepted || byte != b'a',
         "an ordinary name byte is accepted"
     );
+    assert!(
+        accepted || (byte != b' ' && byte != b';'),
+        "a value carrying either separator is expressible, never denied"
+    );
+    // The separators are kept out of the caveat body by the *storage* rule, not by
+    // denying the value: whatever the byte was, what is stored holds neither.
+    if let Ok(Target::Mcp(mcp)) = target {
+        for stored in mcp.name().as_bytes() {
+            assert!(
+                *stored != b' ' && *stored != b';',
+                "neither of the token's separators can reach a caveat body"
+            );
+            assert!(
+                matches!(stored, 0x21..=0x7E),
+                "a caveat body is printable ASCII"
+            );
+        }
+    }
     kani::cover!(accepted, "some byte is accepted");
+}
+
+/// **Every byte value, through the storage rule, in one proof.**
+///
+/// The second of the `mcp` kind's two byte classes, read from the other side: which
+/// bytes a caveat body may hold as themselves, and which escapes it may hold at all.
+/// This is the rule `format.rs` leans on when it promises a body holds no separator, and
+/// the rule that keeps one value from having two stored spellings.
+///
+/// Both halves are stated over three bytes with one symbolic, which is the whole domain:
+/// the rule classifies each position on its own.
+#[kani::proof]
+#[kani::unwind(16)]
+fn every_stored_mcp_value_byte_is_classified_the_way_the_rule_says() {
+    let byte: u8 = kani::any();
+
+    // A byte standing for itself is held exactly when it is not one of the three that
+    // had to be encoded.
+    let plain = [b'a', byte, b'b'];
+    assert!(
+        stored_mcp_value(&plain).is_some()
+            == (matches!(byte, 0x21..=0x7E) && byte != b'%' && byte != b';'),
+        "a caveat body holds exactly the bytes that did not have to be encoded"
+    );
+
+    // And an escape is read exactly when it names one of those three, in uppercase hex.
+    // `%41` for `A` would be a second stored spelling of one value; `%3b` a second
+    // spelling of one escape.
+    let escaped = [b'%', byte, b'0'];
+    assert!(
+        stored_mcp_value(&escaped).is_some() == (byte == b'2'),
+        "only %20, %25 and %3B name a byte that had to be encoded"
+    );
+    kani::cover!(
+        stored_mcp_value(&plain).is_some(),
+        "some byte is held as itself"
+    );
+}
+
+/// **The storage encoding is exactly invertible.**
+///
+/// A caveat body holds an MCP value percent-encoded, and the token format's write-back
+/// check requires a stored caveat to produce the same bytes again. That holds only if
+/// [`store_mcp_value`] and [`stored_mcp_value`] are inverses: what is written must read
+/// back, unchanged.
+///
+/// **This one does not finish, and it is kept for the same reason the group-1 harnesses
+/// are.** The cost is the one this file's header names: [`store_mcp_value`] builds a
+/// `String` from bytes the solver does not know, so its length, capacity and growth are
+/// all symbolic.
+///
+/// What it states is worth proving, so it stays. What actually pins it today is Rust:
+/// `every_admitted_value_stores_and_reads_back_unchanged` in `canonical.rs` walks all 95
+/// admitted bytes, and `crates/gate/tests/invariants.rs` seals every accepted target into
+/// a token and reads it back, 200,000 hostile rounds per run. The classification either
+/// side of the round trip is proved complete by the harness above; it is the join between
+/// them that is sampled rather than proved.
+#[kani::proof]
+#[kani::unwind(16)]
+fn a_written_mcp_value_reads_back_unchanged() {
+    let byte: u8 = kani::any();
+    kani::assume(byte == b' ' || byte == b'%' || byte == b';' || byte == b'a');
+
+    let value = [b'a', byte, b'b'];
+    let stored = store_mcp_value(&value);
+    assert!(
+        stored_mcp_value(stored.as_bytes()).as_deref() == Some(stored.as_str()),
+        "a stored value reads back as itself"
+    );
+    kani::cover!(true, "the proof reaches an admitted value");
 }
 
 /// **Every byte value, all 256 of them, through every byte rule at once.** This is not

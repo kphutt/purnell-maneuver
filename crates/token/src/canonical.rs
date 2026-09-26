@@ -21,6 +21,25 @@
 //! in is the scheme's default port, and only when no port is given. A false denial is
 //! the accepted cost.
 //!
+//! **Folding nothing is not the same as rewriting nothing.** The rule the policy needs
+//! is that the map from request to target is *injective*: apart from the dropped query,
+//! two requests a real server keeps apart never get one target. A rewrite that is
+//! injective and has exactly one output per input breaks no rule, and there are two of
+//! them. The port rule fills in the scheme's default when no port is given (and denies
+//! that default written out, so the two spellings never meet). An MCP value is
+//! **percent-encoded for storage** ([`store_mcp_value`]), because the token's two
+//! separators would otherwise end a caveat body early. Neither one merges anything:
+//! distinct inputs still give distinct targets.
+//!
+//! **Two encodings meet on an MCP value, and they belong to different people.** The
+//! *wire* encoding is MCP's `=?base64?…?=` sentinel: theirs, decided by them, undone on
+//! the way in so the rules are applied to the value a server would compare. The
+//! *storage* encoding is this file's percent-encoding: ours, applied on the way into a
+//! caveat body, and invisible on the wire. A value is read through the first and stored
+//! through the second, so the bytes in a caveat body are not the bytes on the wire, and
+//! reading a stored caveat back goes through [`canonicalize_stored`] rather than
+//! [`canonicalize`].
+//!
 //! **The rule set is pinned by the caveat kind.** A stored caveat is valid only if it
 //! reads back through these rules to the same bytes (see `format.rs`), so the `http`
 //! caveat kind in a `v1` token means "an HTTP target under this rule set". That makes
@@ -35,7 +54,7 @@
 //!
 //! **Every canonicalization rule lives in this file, and nowhere else.** The rest of
 //! the crate sees only [`canonicalize`], [`write_authority`] and the byte limits: the
-//! token format checks a stored caveat by running it back through `canonicalize`, and
+//! token format checks a stored caveat by running it back through `canonicalize_stored`, and
 //! observe, learn, seal and check never look at a rule. So this rule set can be
 //! replaced wholesale by rewriting this one file and the conformance vectors, under a new
 //! caveat kind if it widens anything.
@@ -122,6 +141,37 @@ impl Scheme {
 /// not a mode — the same bytes always give the same target, and no token or
 /// configuration is consulted.
 pub fn canonicalize(request: &RequestFacts) -> Result<Target, Denial> {
+    canonicalize_fields(request, McpSpelling::Wire)
+}
+
+/// Reads a **stored** caveat's fields back: the same rules as [`canonicalize`], except
+/// that the two MCP values are read in the spelling a caveat body holds them in
+/// (percent-encoded, [`stored_mcp_value`]) rather than the spelling they arrive in on
+/// the wire (MCP's base64 sentinel, [`canonical_mcp_value`]).
+///
+/// The two are the same function for every other field, and for an `http` caveat they
+/// are the same function outright: only the MCP values have a storage spelling that
+/// differs from their wire spelling.
+///
+/// It takes [`RequestFacts`] because a caveat body carries exactly the same fields a
+/// request does; they are stored bytes, not received ones, which is the whole
+/// difference this entry point names. `format.rs` is the only caller.
+pub(crate) fn canonicalize_stored(caveat: &RequestFacts) -> Result<Target, Denial> {
+    canonicalize_fields(caveat, McpSpelling::Stored)
+}
+
+/// Which spelling of an MCP value the fields being read carry. Every other field reads
+/// the same either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum McpSpelling {
+    /// As a server received it: plain, or inside MCP's base64 sentinel.
+    Wire,
+    /// As a caveat body holds it: percent-encoded by [`store_mcp_value`].
+    Stored,
+}
+
+/// The body both entry points share.
+fn canonicalize_fields(request: &RequestFacts, spelling: McpSpelling) -> Result<Target, Denial> {
     let mcp_over_limit = request.mcp.is_some_and(|mcp| {
         mcp.method.len() > MAX_MCP_METHOD_BYTES || mcp.name.len() > MAX_MCP_NAME_BYTES
     });
@@ -150,8 +200,10 @@ pub fn canonicalize(request: &RequestFacts) -> Result<Target, Denial> {
     match request.mcp {
         None => Ok(Target::Http(http)),
         Some(mcp) => {
-            let mcp_method = canonical_mcp_value(mcp.method).ok_or(Denial::MalformedMcpMethod)?;
-            let mcp_name = canonical_mcp_value(mcp.name).ok_or(Denial::MalformedMcpName)?;
+            let mcp_method = read_mcp_value(mcp.method, MAX_MCP_METHOD_BYTES, spelling)
+                .ok_or(Denial::MalformedMcpMethod)?;
+            let mcp_name = read_mcp_value(mcp.name, MAX_MCP_NAME_BYTES, spelling)
+                .ok_or(Denial::MalformedMcpName)?;
             Ok(Target::Mcp(McpTarget::new(http, mcp_method, mcp_name)))
         }
     }
@@ -615,12 +667,20 @@ impl Utf8Decoder {
 const SENTINEL_OPEN: &[u8] = b"=?base64?";
 const SENTINEL_CLOSE: &[u8] = b"?=";
 
-/// An `Mcp-Method` or `Mcp-Name` value: kept exactly, never rewritten, and accepted
-/// only in the one spelling MCP leaves open for it.
+/// Reads one MCP value in whichever spelling it arrived in.
+fn read_mcp_value(raw: &[u8], limit: usize, spelling: McpSpelling) -> Option<String> {
+    match spelling {
+        McpSpelling::Wire => canonical_mcp_value(raw, limit),
+        McpSpelling::Stored => stored_mcp_value(raw),
+    }
+}
+
+/// An `Mcp-Method` or `Mcp-Name` value as a server received it, read into the one
+/// spelling a caveat body stores it as.
 ///
-/// Returns the accepted bytes unchanged, or `None` to deny. Nothing is folded and
-/// nothing is decoded *into* the target — the decoding below is how the rules are
-/// applied, not a rewrite.
+/// Returns the **stored** spelling ([`store_mcp_value`]), or `None` to deny. Nothing is
+/// folded: one value has one stored spelling and one wire spelling, and the map between
+/// them runs both ways without loss.
 ///
 /// **Why the sentinel has to be decoded before anything else is decided.** MCP lets a
 /// value travel base64-wrapped (`=?base64?Z2V0X3dlYXRoZXI=?=`) as well as plain
@@ -629,32 +689,36 @@ const SENTINEL_CLOSE: &[u8] = b"?=";
 /// targets, which is the merge this canonicalizer exists to prevent — and worse, it
 /// would let a value that breaks the rules below arrive wrapped and be stored as if it
 /// were an ordinary opaque name. So the value is decoded, the rules are applied to what
-/// it decodes to, and then the wrapping itself is checked:
+/// it decodes to, the wrapping itself is checked, and only then is the value written
+/// into its stored spelling:
 ///
-/// - **The body of the value.** Non-empty, and every byte is visible ASCII
-///   (`0x21..=0x7E`) other than `;`. That denies a space, a control byte, a leading or
-///   trailing space and every non-ASCII byte in one rule, and it is what keeps the
-///   token's two separators out of a caveat body: `format.rs` promises `;` and space
-///   never appear in a canonical field, and this is the field that would otherwise
-///   break that promise. **This is a tightening and it is a limit for now, not a
-///   settled answer**: a conforming `Mcp-Name` may carry a space, and a `resources/read`
-///   name is a full URI where `;` is legal, so this rule denies traffic MCP permits.
-///   Percent-encoding the value in the caveat body instead is a later decision, and it
-///   would be a new caveat kind rather than an edit to this one.
+/// - **The body of the value.** Non-empty, and every byte is printable ASCII
+///   (`0x20..=0x7E`). That denies a control byte and every non-ASCII byte in one rule.
+///   A space and a `;` are *inside* this class, and reaching them is required: both are
+///   legal in a conforming value (an `Mcp-Name` may carry an internal space, and a
+///   `resources/read` name is a full URI, where `;` is legal in a segment), and both are
+///   the token's separators, so the caveat body carries them percent-encoded instead of
+///   denying them. See [`store_mcp_value`].
 /// - **Exactly one spelling per value.** MCP requires a client to wrap a value it
-///   cannot represent as plain ASCII, and a value that itself reads as a wrapper
-///   (`=?…?=`) can only ever arrive wrapped, because the markers would otherwise be
-///   read as the wrapper they look like. So a value that reads as a wrapper must arrive
-///   wrapped, and every other value must arrive plain: wrapping something that did not
-///   need it is denied rather than folded. One value, one spelling, so comparing the
-///   bytes that arrived *is* comparing the values.
+///   cannot spell as plain ASCII — non-ASCII, a control byte, or leading or trailing
+///   whitespace — and a value that itself reads as a wrapper (`=?…?=`) can only ever
+///   arrive wrapped, because the markers would otherwise be read as the wrapper they
+///   look like. [`must_be_wrapped`] is that condition, and a value must arrive wrapped
+///   exactly when it holds: wrapping something that did not need it is denied rather
+///   than folded, and so is sending something plain that had to be wrapped. One value,
+///   one wire spelling.
 /// - **Canonical base64 only**, when there is a wrapper: the standard alphabet
 ///   (`A-Za-z0-9+/`), padded to a multiple of four, `=` only at the very end, and the
 ///   bits the padding drops all zero. Base64 otherwise spells one value several ways
 ///   (base64url, unpadded, spare trailing bits), and several spellings of one value is
 ///   the same merge again. These checks together are the "re-encoding must give back
 ///   exactly what arrived" property, written out rather than round-tripped.
-fn canonical_mcp_value(raw: &[u8]) -> Option<String> {
+/// - **The stored spelling has to fit the field's limit.** A value is at most `limit`
+///   bytes on the wire, but storing it can treble a byte (`;` becomes `%3B`), so a value
+///   that is mostly separators can overflow the field it would be stored in. Such a
+///   value is denied here rather than sealed into a caveat that could never be read
+///   back. It is a false denial, and it is the only one this rule adds.
+fn canonical_mcp_value(raw: &[u8], limit: usize) -> Option<String> {
     let payload = raw
         .strip_prefix(SENTINEL_OPEN)
         .and_then(|rest| rest.strip_suffix(SENTINEL_CLOSE));
@@ -662,14 +726,27 @@ fn canonical_mcp_value(raw: &[u8]) -> Option<String> {
         Some(payload) => base64_decode(payload)?,
         None => raw.to_vec(),
     };
-    let body_is_canonical = !value.is_empty()
-        && value
-            .iter()
-            .all(|&byte| matches!(byte, 0x21..=0x7E) && byte != b';');
-    if !body_is_canonical || reads_as_a_wrapper(&value) != payload.is_some() {
+    let body_is_canonical =
+        !value.is_empty() && value.iter().all(|&byte| matches!(byte, 0x20..=0x7E));
+    if !body_is_canonical || must_be_wrapped(&value) != payload.is_some() {
         return None;
     }
-    Some(ascii_to_string(raw))
+    let stored = store_mcp_value(&value);
+    (stored.len() <= limit).then_some(stored)
+}
+
+/// Whether MCP leaves this value no plain spelling, so it can only arrive wrapped.
+///
+/// Two reasons, and they come from different places. MCP's own trigger is a value that
+/// cannot travel as plain ASCII: non-ASCII, a control byte, or **leading or trailing
+/// whitespace** — an internal space is explicitly not a trigger, so `us west 1` travels
+/// literally. The first two cannot reach this function, because the body rule above has
+/// already denied them, and the only whitespace left after that rule is the space
+/// itself; so what survives of MCP's trigger here is a leading or trailing space.
+/// The second reason is this canonicalizer's own: a value that reads as a wrapper would
+/// be taken for one if it were sent plain, so it has no plain spelling either.
+fn must_be_wrapped(value: &[u8]) -> bool {
+    value.first() == Some(&b' ') || value.last() == Some(&b' ') || reads_as_a_wrapper(value)
 }
 
 /// Whether a value would be read as a base64 wrapper if it were sent plain, so MCP
@@ -677,6 +754,93 @@ fn canonical_mcp_value(raw: &[u8]) -> Option<String> {
 /// closing markers do not overlap.
 fn reads_as_a_wrapper(value: &[u8]) -> bool {
     value.len() >= 4 && value.starts_with(b"=?") && value.ends_with(SENTINEL_CLOSE)
+}
+
+/// The stored spelling of a byte a caveat body cannot carry as itself, or `None` for
+/// every byte it can.
+///
+/// **Three bytes, and one table for both directions.** A space and a `;` are the token's
+/// two field separators, so a caveat body that carried either would end early;
+/// `%` is the escape itself, and leaving it plain would give `us west 1` and the
+/// literal `us%20west%201` one stored spelling, which is the merge this file exists to
+/// prevent. Nothing else is encoded: encoding a byte that does not have to be would be a
+/// second stored spelling of one value, exactly the way `canonical_path` denies `%41`
+/// for `A`. [`store_mcp_value`] writes what this names and [`stored_mcp_value`] accepts
+/// what this names, so the two cannot drift apart.
+fn escaped_in_storage(byte: u8) -> Option<&'static str> {
+    match byte {
+        b' ' => Some("%20"),
+        b'%' => Some("%25"),
+        b';' => Some("%3B"),
+        _ => None,
+    }
+}
+
+/// Whether a byte stands for itself in a caveat body.
+fn is_plain_stored_byte(byte: u8) -> bool {
+    matches!(byte, 0x21..=0x7E) && escaped_in_storage(byte).is_none()
+}
+
+/// Writes a value the way a caveat body holds it: every byte as itself, except the three
+/// [`escaped_in_storage`] names.
+///
+/// This is the **storage** encoding, not a wire one. It is this file's, it never travels,
+/// and it is what lets a conforming value carrying a space or a `;` be expressed at all.
+/// It is minimal (nothing else is encoded) and canonical (uppercase hex, one escape per
+/// byte), so each value has exactly one stored spelling, and [`stored_mcp_value`] accepts
+/// exactly the spellings this writes.
+///
+/// Every byte reaching this is printable ASCII, checked by the body rule above, so each
+/// one is a single `char`.
+fn store_mcp_value(value: &[u8]) -> String {
+    let mut stored = String::new();
+    for &byte in value {
+        match escaped_in_storage(byte) {
+            Some(escape) => stored.push_str(escape),
+            None => stored.push(char::from(byte)),
+        }
+    }
+    stored
+}
+
+/// An MCP value as a caveat body holds it: accepted only in the one spelling
+/// [`store_mcp_value`] writes, and returned unchanged.
+///
+/// The loop is `canonical_path`'s, and deliberately so — the two rules are the same
+/// discipline, and they share [`uppercase_hex_value`] and [`hex_byte`]:
+///
+/// - Non-empty.
+/// - A byte standing for itself must be one [`is_plain_stored_byte`] names.
+/// - A `%` must be followed by two **uppercase** hex digits, and they must name one of
+///   the three bytes that had to be encoded. `%41` for `A` is denied as a second
+///   spelling of a value, and `%3b` is denied for its lowercase hex, both for the same
+///   reasons the path rule denies them.
+///
+/// The classes differ from the path's, because a value is opaque bytes and a path is a
+/// URI: a path denies `%3B` outright, where a value must be able to carry one.
+fn stored_mcp_value(stored: &[u8]) -> Option<String> {
+    if stored.is_empty() {
+        return None;
+    }
+    let mut bytes = stored.iter().copied();
+    while let Some(byte) = bytes.next() {
+        let is_canonical = if byte == b'%' {
+            let high = bytes.next().and_then(uppercase_hex_value);
+            let low = bytes.next().and_then(uppercase_hex_value);
+            match (high, low) {
+                (Some(high), Some(low)) => {
+                    hex_byte(high, low).is_some_and(|decoded| escaped_in_storage(decoded).is_some())
+                }
+                _ => false,
+            }
+        } else {
+            is_plain_stored_byte(byte)
+        };
+        if !is_canonical {
+            return None;
+        }
+    }
+    Some(ascii_to_string(stored))
 }
 
 /// Reads canonical padded standard-alphabet base64, or `None`.
@@ -1669,9 +1833,10 @@ mod tests {
 
     // --- byte classes, closed over all 256 values ----------------------------------
 
-    // Three rules below are stated as a byte *class*: which bytes a path may carry as
-    // themselves, which bytes an RFC 9110 token may hold, and which bytes a host name
-    // may hold. A hand-picked sample of bytes cannot see a class that has quietly
+    // Five rules below are stated as a byte *class*: which bytes a path may carry as
+    // themselves, which bytes an RFC 9110 token may hold, which bytes a host name may
+    // hold, which bytes an MCP value may carry, and which bytes a caveat body may hold
+    // as themselves. A hand-picked sample of bytes cannot see a class that has quietly
     // gained or lost a member, so each test here loops over all 256 values.
     //
     // Each oracle is written as an explicit table in ASCII order. That is on purpose:
@@ -1692,6 +1857,20 @@ mod tests {
 
     /// The bytes a host name may hold, written out.
     const HOST_NAME_BYTE: &[u8] = b"-.0123456789_abcdefghijklmnopqrstuvwxyz";
+
+    /// Every byte an MCP **value** may carry, written out in ASCII order: the space
+    /// through `~`. The space and the `;` are in it — a conforming value may hold
+    /// either, and the caveat body carries them encoded rather than denying them.
+    const MCP_VALUE_BYTE: &[u8] =
+        b" !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
+    /// Every byte a **caveat body** may hold as itself: the table above, minus the three
+    /// that have to be escaped there.
+    const STORED_VALUE_BYTE: &[u8] =
+        b"!\"#$&'()*+,-./0123456789:<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+
+    /// The only three bytes a caveat body may hold percent-encoded, written out.
+    const ESCAPED_BYTE: &[u8] = b" %;";
 
     /// Whether a raw path is accepted. `path_of` takes text; these tests need bytes.
     fn accepts_path(path: &[u8]) -> bool {
@@ -1841,37 +2020,106 @@ mod tests {
         assert_eq!(target.name(), "file:///a");
     }
 
-    /// The token's two separators can never reach a caveat body, so they are denied in
-    /// the one field that could otherwise carry them. This is a limit for now, not a
-    /// settled answer: MCP permits both.
+    /// The token's two separators can never reach a caveat body — but a conforming
+    /// value may carry either, so they are stored percent-encoded rather than denied.
     #[test]
-    fn an_mcp_value_holding_a_separator_is_denied() {
-        for name in [
-            "get document",
-            " get_document",
-            "get_document ",
-            "get;document",
-        ] {
-            assert_eq!(mcp_name_of(name), Err(Denial::MalformedMcpName), "{name:?}");
+    fn a_separator_inside_a_value_is_stored_encoded_never_denied() {
+        assert_eq!(
+            mcp_name_of("get document"),
+            Ok("get%20document".to_string())
+        );
+        assert_eq!(mcp_name_of("file:///a;b"), Ok("file:///a%3Bb".to_string()));
+        // The escape itself: a literal `%` is encoded too, or one value would have two
+        // stored spellings.
+        assert_eq!(mcp_name_of("a%20b"), Ok("a%2520b".to_string()));
+        assert_eq!(mcp_name_of("100%"), Ok("100%25".to_string()));
+        // Neither separator reaches the stored spelling of any of them.
+        for name in ["get document", "file:///a;b", "a%20b", "a b;c%d"] {
+            let stored = mcp_name_of(name).unwrap();
+            assert!(
+                !stored.contains(' ') && !stored.contains(';'),
+                "{name:?} stored as {stored:?}"
+            );
         }
     }
 
-    /// Empty, control bytes, `DEL` and non-ASCII: one rule, `0x21..=0x7E`.
+    /// `us west 1` is a conforming MCP value: MCP wraps a value in its base64 sentinel
+    /// for non-ASCII, a control byte or *leading or trailing* whitespace, and an
+    /// internal space is none of those, so the value travels literally. It has exactly
+    /// one legal spelling: the plain form, stored percent-encoded.
     #[test]
-    fn an_mcp_value_that_is_not_visible_ascii_is_denied() {
+    fn a_value_with_an_internal_space_has_exactly_one_legal_spelling() {
+        // The one legal spelling: plain on the wire, encoded in storage.
+        assert_eq!(mcp_name_of("us west 1"), Ok("us%20west%201".to_string()));
+        // And the other spellings a client might reach for are all still denied, so
+        // "exactly one" is the whole claim: the gratuitously wrapped form...
+        assert_eq!(
+            mcp_name_of("=?base64?dXMgd2VzdCAx?="),
+            Err(Denial::MalformedMcpName)
+        );
+        // ...and the storage spelling sent as if it were a wire value, which is an
+        // ordinary different value (`us%20west%201`, with two literal `%`) and is
+        // stored as that instead.
+        assert_eq!(
+            mcp_name_of("us%20west%201"),
+            Ok("us%2520west%25201".to_string())
+        );
+        // One stored spelling, so the two are different destinations and neither can
+        // stand in for the other.
+        assert_ne!(mcp_name_of("us west 1"), mcp_name_of("us%20west%201"));
+    }
+
+    /// A value MCP itself requires to be wrapped: leading or trailing whitespace. The
+    /// wrapper is the only way it can travel, so the wrapped form is the accepted one,
+    /// and it stores as the value it stands for.
+    #[test]
+    fn a_value_that_legitimately_requires_the_sentinel_arrives_wrapped() {
+        // " get_document" and "get_document ", each wrapped.
+        assert_eq!(
+            mcp_name_of("=?base64?IGdldF9kb2N1bWVudA==?="),
+            Ok("%20get_document".to_string())
+        );
+        assert_eq!(
+            mcp_name_of("=?base64?Z2V0X2RvY3VtZW50IA==?="),
+            Ok("get_document%20".to_string())
+        );
+        // Sent plain, the same values are denied: MCP leaves them no plain spelling.
+        assert_eq!(mcp_name_of(" get_document"), Err(Denial::MalformedMcpName));
+        assert_eq!(mcp_name_of("get_document "), Err(Denial::MalformedMcpName));
+        // A lone space is a leading *and* a trailing one, and it is a value.
+        assert_eq!(mcp_name_of("=?base64?IA==?="), Ok("%20".to_string()));
+        assert_eq!(mcp_name_of(" "), Err(Denial::MalformedMcpName));
+    }
+
+    /// Empty, control bytes, `DEL` and non-ASCII: one rule, `0x20..=0x7E`. None of these
+    /// is widened by storage encoding — a value that MCP would wrap for any of these
+    /// reasons is still denied in both spellings, because a caveat body is ASCII.
+    #[test]
+    fn an_mcp_value_that_is_not_printable_ascii_is_denied() {
         assert_eq!(mcp_name_of(""), Err(Denial::MalformedMcpName));
         assert_eq!(mcp_name_of("get\tname"), Err(Denial::MalformedMcpName));
         assert_eq!(mcp_name_of("get\nname"), Err(Denial::MalformedMcpName));
         assert_eq!(mcp_name_of("get\u{7f}name"), Err(Denial::MalformedMcpName));
         assert_eq!(mcp_name_of("caf\u{e9}"), Err(Denial::MalformedMcpName));
+        // Wrapped, the way MCP requires for exactly these values: still denied, because
+        // the rules are applied to what the wrapper stands for. "get\tname" and "café".
+        assert_eq!(
+            mcp_name_of("=?base64?Z2V0CW5hbWU=?="),
+            Err(Denial::MalformedMcpName)
+        );
+        assert_eq!(
+            mcp_name_of("=?base64?Y2Fmw6k=?="),
+            Err(Denial::MalformedMcpName)
+        );
     }
 
-    /// Every byte value, in one pass: exactly the visible ASCII bytes other than `;`
-    /// are accepted, and nothing else is.
+    /// Every byte value, in one pass: exactly the printable ASCII bytes are carried, and
+    /// nothing else is. The byte is put *between* two others, because a leading or
+    /// trailing space is MCP's own wrapping trigger and is a rule of its own (above).
     #[test]
     fn an_mcp_value_holds_exactly_the_bytes_the_rule_names() {
         for byte in 0u8..=255 {
-            let name = [b"get".as_slice(), &[byte]].concat();
+            let name = [b"a".as_slice(), &[byte], b"b".as_slice()].concat();
             let facts = RequestFacts {
                 mcp: Some(crate::target::McpFacts {
                     method: b"tools/call",
@@ -1879,13 +2127,102 @@ mod tests {
                 }),
                 ..crate::target::test_support::facts("POST", "https", "mcp.example.com", "/mcp")
             };
-            let expected = matches!(byte, 0x21..=0x7E) && byte != b';';
             assert_eq!(
                 canonicalize(&facts).is_ok(),
-                expected,
+                MCP_VALUE_BYTE.contains(&byte),
                 "byte {byte:#04x} in an Mcp-Name"
             );
         }
+    }
+
+    /// The same closure, one layer in: which bytes a **caveat body** may hold as
+    /// themselves, and which escapes it may hold at all. A value's byte class and its
+    /// stored byte class are two rules, and only the second one is what `format.rs`
+    /// relies on when it promises a body holds no separator.
+    #[test]
+    fn a_stored_mcp_value_holds_exactly_the_plain_bytes_and_escapes_the_rule_names() {
+        for byte in 0u8..=255 {
+            let stored = [b"a".as_slice(), &[byte], b"b".as_slice()].concat();
+            assert_eq!(
+                stored_mcp_value(&stored).is_some(),
+                STORED_VALUE_BYTE.contains(&byte),
+                "stored byte {byte:#04x}"
+            );
+        }
+        // Every two-digit escape, all 256 of them, in uppercase and in lowercase hex:
+        // only the three bytes that *had* to be encoded may appear encoded, and only in
+        // uppercase. `%41` for `A` and `%3b` for `;` are the two ways a second stored
+        // spelling of one value could get in, and both are denied.
+        for byte in 0u8..=255 {
+            let upper = alloc::format!("a%{byte:02X}b");
+            assert_eq!(
+                stored_mcp_value(upper.as_bytes()).is_some(),
+                ESCAPED_BYTE.contains(&byte),
+                "escape {upper:?}"
+            );
+            let lower = alloc::format!("a%{byte:02x}b");
+            if lower != upper {
+                assert!(
+                    stored_mcp_value(lower.as_bytes()).is_none(),
+                    "lowercase escape {lower:?}"
+                );
+            }
+        }
+        // A `%` that names nothing at all is denied the same way a path's is.
+        for stored in ["%", "%2", "%2G", "a%", "a%2", "%%20", "%20%", ""] {
+            assert!(stored_mcp_value(stored.as_bytes()).is_none(), "{stored:?}");
+        }
+    }
+
+    /// Round trip, over every value the byte rule admits: a value's stored spelling
+    /// reads back, reads back to itself, and is the only stored spelling it has.
+    #[test]
+    fn every_admitted_value_stores_and_reads_back_unchanged() {
+        for byte in MCP_VALUE_BYTE.iter().copied() {
+            // Between two plain bytes, so no value here needs the wrapper.
+            let value = [b'a', byte, b'b'];
+            let stored = store_mcp_value(&value);
+            assert_eq!(
+                stored_mcp_value(stored.as_bytes()).as_deref(),
+                Some(stored.as_str()),
+                "byte {byte:#04x}"
+            );
+            // The wire reading gives the same stored bytes, so observe and decode agree.
+            assert_eq!(
+                canonical_mcp_value(&value, MAX_MCP_NAME_BYTES).as_deref(),
+                Some(stored.as_str()),
+                "byte {byte:#04x}"
+            );
+            // Two distinct values never share a stored spelling.
+            let other = *b"azb";
+            assert_eq!(
+                stored == store_mcp_value(&other),
+                value == other,
+                "byte {byte:#04x}"
+            );
+        }
+    }
+
+    /// A stored value the limit cannot hold is denied rather than sealed into a caveat
+    /// that could not be read back.
+    #[test]
+    fn a_value_whose_stored_spelling_would_not_fit_is_denied() {
+        // Every `;` trebles, so a value of separators fills the field three times as
+        // fast. This one is well inside the wire limit and lands exactly on the stored
+        // one.
+        let fits = ";".repeat(MAX_MCP_NAME_BYTES / 3) + &"a".repeat(MAX_MCP_NAME_BYTES % 3);
+        assert!(fits.len() <= MAX_MCP_NAME_BYTES);
+        let stored = mcp_name_of(&fits).unwrap();
+        assert_eq!(stored.len(), MAX_MCP_NAME_BYTES);
+        // One more separator, and the stored spelling no longer fits, so the value is
+        // denied rather than sealed into a caveat that could not be read back.
+        let one_more = ";".to_string() + &fits;
+        assert!(one_more.len() <= MAX_MCP_NAME_BYTES);
+        assert_eq!(
+            mcp_name_of(&one_more),
+            Err(Denial::MalformedMcpName),
+            "a value inside the wire limit whose stored spelling is not"
+        );
     }
 
     /// The rule that keeps one value from having two names: wrapping something that
@@ -1906,6 +2243,10 @@ mod tests {
     /// The other half of the same rule: a value that would read as a wrapper has no
     /// plain spelling, so it must arrive wrapped. The markers are case-sensitive, so
     /// `=?BASE64?...?=` is an ordinary value that happens to look like one.
+    ///
+    /// The wrapper is a *wire* spelling, so it never reaches the stored one: what is
+    /// stored is the value the wrapper stands for, which for these values needs no
+    /// escaping at all.
     #[test]
     fn a_value_that_reads_as_a_wrapper_must_arrive_wrapped() {
         // "=?BASE64?Zm9v?=" sent plain: denied, because it reads as a wrapper.
@@ -1913,29 +2254,31 @@ mod tests {
             mcp_name_of("=?BASE64?Zm9v?="),
             Err(Denial::MalformedMcpName)
         );
-        // The same value, wrapped the way MCP requires: accepted, and stored wrapped,
-        // because that is the one spelling it has.
-        let wrapped = "=?base64?PT9CQVNFNjQ/Wm05dj89?=";
-        assert_eq!(mcp_name_of(wrapped), Ok(wrapped.to_string()));
+        // The same value, wrapped the way MCP requires: accepted, and stored as the
+        // value itself, because that is what the wrapper stood for.
+        assert_eq!(
+            mcp_name_of("=?base64?PT9CQVNFNjQ/Wm05dj89?="),
+            Ok("=?BASE64?Zm9v?=".to_string())
+        );
         // A value too short to have two markers is not one, so it stays plain.
         assert_eq!(mcp_name_of("=?="), Ok("=?=".to_string()));
         assert_eq!(mcp_name_of("=?x?="), Err(Denial::MalformedMcpName));
-        assert_eq!(
-            mcp_name_of("=?base64?PT94Pz0=?="),
-            Ok("=?base64?PT94Pz0=?=".to_string())
-        );
+        assert_eq!(mcp_name_of("=?base64?PT94Pz0=?="), Ok("=?x?=".to_string()));
         assert_eq!(mcp_name_of("=?not-base64?="), Err(Denial::MalformedMcpName));
         assert_eq!(
             mcp_name_of("=?base64?PT9ub3QtYmFzZTY0Pz0=?="),
-            Ok("=?base64?PT9ub3QtYmFzZTY0Pz0=?=".to_string())
+            Ok("=?not-base64?=".to_string())
         );
     }
 
-    /// Why decode at all: the value rules are applied to what the wrapper
-    /// stands for, so a separator cannot be smuggled past them inside base64.
+    /// Why decode at all: the rules are applied to what the wrapper stands
+    /// for. A separator inside base64 can no longer break the token's grammar, because
+    /// the storage encoding would catch it either way — but it is still denied, and by
+    /// the rule that matters now: the value needed no wrapping, so the wrapped spelling
+    /// is a second spelling of it.
     #[test]
     fn a_wrapper_is_decoded_before_the_value_rules_are_applied() {
-        // "get document" and "get;document", wrapped.
+        // "get document" and "get;document", wrapped. Neither needed the wrapper.
         assert_eq!(
             mcp_name_of("=?base64?Z2V0IGRvY3VtZW50?="),
             Err(Denial::MalformedMcpName)
@@ -1943,6 +2286,16 @@ mod tests {
         assert_eq!(
             mcp_name_of("=?base64?Z2V0O2RvY3VtZW50?="),
             Err(Denial::MalformedMcpName)
+        );
+        // Sent plain, the way MCP requires for a value with an internal separator, both
+        // are accepted and stored encoded.
+        assert_eq!(
+            mcp_name_of("get document"),
+            Ok("get%20document".to_string())
+        );
+        assert_eq!(
+            mcp_name_of("get;document"),
+            Ok("get%3Bdocument".to_string())
         );
     }
 
@@ -1988,17 +2341,18 @@ mod tests {
                 name,
             ))
         };
+        // A tab is a control byte, which no spelling of a value may carry.
         assert_eq!(
-            bad("tools call", "get_document"),
+            bad("tools	call", "get_document"),
             Err(Denial::MalformedMcpMethod)
         );
         assert_eq!(
-            bad("tools/call", "get document"),
+            bad("tools/call", "get	document"),
             Err(Denial::MalformedMcpName)
         );
         // The method is read first, so it names the denial when both are bad.
         assert_eq!(
-            bad("tools call", "get document"),
+            bad("tools	call", "get	document"),
             Err(Denial::MalformedMcpMethod)
         );
 

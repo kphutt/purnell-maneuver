@@ -49,9 +49,16 @@ pub enum Denial {
     /// The path breaks one of the path rules.
     MalformedPath,
     /// The `Mcp-Method` value breaks one of the MCP value rules: it is empty, carries a
-    /// byte that is not visible ASCII (so a space or a control byte), carries a `;`, is
-    /// base64-wrapped when it did not have to be or unwrapped when it did, or its
-    /// wrapping is not canonical base64.
+    /// byte that is not printable ASCII (so a control byte or a non-ASCII one), is
+    /// base64-wrapped when it did not have to be or unwrapped when it did, its wrapping
+    /// is not canonical base64, or its stored spelling would not fit the field's limit.
+    ///
+    /// A space and a `;` are **not** in this list, although both are the token's
+    /// separators: a conforming value may carry either, so the caveat body stores them
+    /// percent-encoded instead of denying them. A *stored* value whose spelling is not
+    /// the one the canonicalizer writes — a byte encoded that did not have to be,
+    /// lowercase hex, or an escape naming nothing — makes the whole token
+    /// `MalformedToken`.
     MalformedMcpMethod,
     /// The `Mcp-Name` value breaks one of the same MCP value rules as
     /// [`Denial::MalformedMcpMethod`].
