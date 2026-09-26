@@ -14,9 +14,15 @@ pub enum Denial {
     EmptyToken,
     /// The token was longer than [`crate::MAX_TOKEN_BYTES`]. Checked before reading it.
     TokenTooLong,
-    /// The token did not start with a version this build knows (only `v1` today).
+    /// The token did not start with a version this build knows (`v1` or `v2` today).
     UnknownVersion,
-    /// The token said `v1` but its body is not exactly what `seal` would have written.
+    /// The token said `v2` but its run id is missing, empty, longer than
+    /// [`crate::MAX_RUN_ID_BYTES`], or carries a byte outside `A-Z`, `a-z`, `0-9`, `-`
+    /// and `_`. The same rule refuses a run id offered to
+    /// [`RunId::new`](crate::RunId::new).
+    MalformedRunId,
+    /// The token named a version this build knows but its body is not exactly what
+    /// `seal` would have written.
     MalformedToken,
     /// The token holds a caveat of a kind this build does not know. A caveat is never
     /// skipped, so the whole token denies.
@@ -71,6 +77,7 @@ impl Denial {
             Denial::EmptyToken => "empty_token",
             Denial::TokenTooLong => "token_too_long",
             Denial::UnknownVersion => "unknown_version",
+            Denial::MalformedRunId => "malformed_run_id",
             Denial::MalformedToken => "malformed_token",
             Denial::UnknownCaveatKind => "unknown_caveat_kind",
             Denial::RequestTooLong => "request_too_long",
@@ -99,6 +106,7 @@ mod tests {
         Denial::EmptyToken,
         Denial::TokenTooLong,
         Denial::UnknownVersion,
+        Denial::MalformedRunId,
         Denial::MalformedToken,
         Denial::UnknownCaveatKind,
         Denial::RequestTooLong,
@@ -121,6 +129,7 @@ mod tests {
             Denial::EmptyToken
             | Denial::TokenTooLong
             | Denial::UnknownVersion
+            | Denial::MalformedRunId
             | Denial::MalformedToken
             | Denial::UnknownCaveatKind
             | Denial::RequestTooLong

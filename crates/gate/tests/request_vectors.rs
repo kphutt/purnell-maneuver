@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use gate::{check, observe, Denial, McpFacts, RequestFacts};
+use gate::{check, observe, present, Denial, McpFacts, RequestFacts, RunId};
 use tinyjson::JsonValue;
 
 type Object = HashMap<String, JsonValue>;
@@ -208,8 +208,14 @@ fn canonical_target_vectors_pass() {
 }
 
 /// Checks `request` against `token` and names the outcome the way the vectors do.
+/// Presenting the token is the first step and can itself deny, which is what a caller
+/// sees; the vectors name that denial the same way they name any other.
 fn outcome(token: &[u8], request: &RawRequest) -> &'static str {
-    match check(token, &request.facts()) {
+    let presented = match present(token) {
+        Ok(presented) => presented,
+        Err(denial) => return denial_name(denial),
+    };
+    match check(presented.caveats(), &request.facts()) {
         Ok(_) => "allowed",
         Err(denial) => denial_name(denial),
     }
@@ -231,17 +237,30 @@ fn flow_vectors_pass() {
             .iter()
             .filter_map(|request| observe(&RawRequest::from_json(request).facts()).ok())
             .collect();
-        let token = seal::seal(&seal::learn(&observed)).expect("a small caveat set seals");
+        let set = seal::learn(&observed);
+        // Every case runs twice: once against a `v1` token and once against a `v2` token
+        // sealed for a run. A run id may change no answer anywhere in the file,
+        // so a single expectation covers both.
+        let run = RunId::new(b"r-vectors-1").expect("a well-formed run id");
+        let tokens = [
+            ("v1", seal::seal(&set).expect("a small caveat set seals")),
+            (
+                "v2",
+                seal::seal_for(run, &set).expect("a small caveat set seals"),
+            ),
+        ];
 
         for (i, check_case) in array(case, "checks").iter().enumerate() {
             let check_case = object(check_case);
             let request = RawRequest::from_json(&check_case["request"]);
             let expected = string(check_case, "expected");
-            let actual = outcome(token.as_bytes(), &request);
-            if actual != expected {
-                failures.push(format!(
-                    "case {name:?} check {i}: expected {expected}, got {actual}"
-                ));
+            for (version, token) in &tokens {
+                let actual = outcome(token.as_bytes(), &request);
+                if actual != expected {
+                    failures.push(format!(
+                        "case {name:?} check {i} ({version}): expected {expected}, got {actual}"
+                    ));
+                }
             }
         }
     }

@@ -14,8 +14,13 @@
 //!   and no public function turns text into a caveat. That holds for code; it does not
 //!   stop a person from writing a token by hand, which `gate` honors until tokens
 //!   are signed.
-//! - [`encode`] and [`token_lists`]: the token's byte format. They live in one small
-//!   private module, and nothing else in the workspace knows the format.
+//! - [`encode`], [`encode_for`], [`present`] and [`lists`]: the token's byte format.
+//!   They live in one small private module, and nothing else in the workspace knows the
+//!   format.
+//! - [`RunId`]: the opaque id a `v2` token carries, naming the run it was sealed for.
+//!   [`present`] splits a token into that id and a [`Caveats`] handle, and the handle is
+//!   the only thing `gate::check` is ever given, so what checks a request can never read
+//!   the id.
 //! - [`Denial`]: every way a check can say no, by name.
 //!
 //! Most callers use `gate` (observe, check) and `seal` (learn, seal) instead of this
@@ -38,5 +43,8 @@ pub use canonical::{
 };
 pub use caveat::{learn, Caveat, CaveatSet};
 pub use denial::Denial;
-pub use format::{encode, token_lists, SealError, MAX_TOKEN_BYTES};
+pub use format::{
+    encode, encode_for, lists, present, Caveats, Presented, RunId, SealError, MAX_RUN_ID_BYTES,
+    MAX_TOKEN_BYTES,
+};
 pub use target::{HttpTarget, McpFacts, McpTarget, RequestFacts, Target};

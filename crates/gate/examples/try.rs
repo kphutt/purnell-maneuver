@@ -25,14 +25,14 @@
 //! structured results -- so every word of the narration below is built by this CLI from
 //! those results.
 
-use gate::{check, observe, Denial, RequestFacts, Target};
+use gate::{check, observe, present, Denial, RequestFacts, RunId, Target};
 
 const USAGE: &str = "\
 try -- a small observe -> learn -> seal -> check walkthrough
 
 USAGE:
     cargo run --example try -- observe [--explain] METHOD SCHEME AUTHORITY PATH
-    cargo run --example try -- seal [--explain] (METHOD SCHEME AUTHORITY PATH)...
+    cargo run --example try -- seal [--explain] [--run ID] (METHOD SCHEME AUTHORITY PATH)...
     cargo run --example try -- check [--explain] TOKEN METHOD SCHEME AUTHORITY PATH
 
 A request is four raw fields, one per RequestFacts field -- never a URL string:
@@ -47,6 +47,10 @@ for example: GET https example.com /orders?x=1
               review before you trust it).
     check     prints \"Allowed\" if TOKEN allows the request, or the denial that
               rejects it.
+
+--run ID seals a v2 token naming the run it was sealed for, instead of a v1 token
+that names none. The id is an opaque label the caller supplies. `check` prints the id it read but never uses it -- the id is not among the
+bytes `gate::check` is handed at all.
 
 --explain prints each step instead of just the final answer: the raw request facts
 as given, the canonical target (or which rule denied it and why), and for `seal` the
@@ -86,9 +90,35 @@ fn run(args: &[String]) -> (String, i32) {
         .collect();
     let args = &filtered[..];
 
+    let (run, args) = match take_run(args) {
+        Ok(split) => split,
+        Err(message) => {
+            return (
+                format!(
+                    "{message}
+
+{USAGE}"
+                ),
+                EXIT_USAGE,
+            )
+        }
+    };
+    let args = &args[..];
+
+    if run.is_some() && args.first().map(String::as_str) != Some("seal") {
+        return (
+            format!(
+                "--run only applies to `seal`
+
+{USAGE}"
+            ),
+            EXIT_USAGE,
+        );
+    }
+
     match args.first().map(String::as_str) {
         Some("observe") => run_observe(args.get(1..).unwrap_or(&[]), explain),
-        Some("seal") => run_seal(args.get(1..).unwrap_or(&[]), explain),
+        Some("seal") => run_seal(args.get(1..).unwrap_or(&[]), explain, run.as_deref()),
         Some("check") => run_check(args.get(1..).unwrap_or(&[]), explain),
         Some("-h") | Some("--help") | Some("help") => (USAGE.to_string(), 0),
         Some(other) => (
@@ -97,6 +127,24 @@ fn run(args: &[String]) -> (String, i32) {
         ),
         None => (USAGE.to_string(), EXIT_USAGE),
     }
+}
+
+/// Pulls `--run ID` out of the arguments, leaving the rest positional.
+fn take_run(args: &[String]) -> Result<(Option<String>, Vec<String>), String> {
+    let mut rest = Vec::new();
+    let mut run = None;
+    let mut remaining = args.iter();
+    while let Some(arg) = remaining.next() {
+        if arg == "--run" {
+            match remaining.next() {
+                Some(id) => run = Some(id.clone()),
+                None => return Err("--run needs an ID after it".to_string()),
+            }
+            continue;
+        }
+        rest.push(arg.clone());
+    }
+    Ok((run, rest))
 }
 
 /// Parses exactly one request's four raw fields. Never indexes or slices: a slice
@@ -154,10 +202,15 @@ fn denial_reason(denial: Denial) -> String {
         Denial::EmptyToken => "the token was zero bytes long".to_string(),
         Denial::TokenTooLong => "the token was longer than the maximum token length".to_string(),
         Denial::UnknownVersion => {
-            "the token's version is not one this build knows (only v1 today)".to_string()
+            "the token's version is not one this build knows (v1 or v2 today)".to_string()
+        }
+        Denial::MalformedRunId => {
+            "the token said v2 but its run id is missing, empty, too long, or carries a byte outside A-Z, a-z, 0-9, - and _"
+                .to_string()
         }
         Denial::MalformedToken => {
-            "the token said v1 but its body is not exactly what seal would have written".to_string()
+            "the token named a version this build knows but its body is not exactly what seal would have written"
+                .to_string()
         }
         Denial::UnknownCaveatKind => {
             "the token holds a caveat kind this build does not know (only http and mcp today)"
@@ -207,9 +260,25 @@ fn is_token_format_denial(denial: Denial) -> bool {
         Denial::EmptyToken
             | Denial::TokenTooLong
             | Denial::UnknownVersion
+            | Denial::MalformedRunId
             | Denial::MalformedToken
             | Denial::UnknownCaveatKind
     )
+}
+
+/// How `--explain` narrates which run a token names. A `v1` token names none, which is
+/// not an error: run ids are optional.
+fn run_line(token: &[u8]) -> String {
+    match present(token).ok().and_then(|presented| presented.run()) {
+        Some(run) => format!(
+            "-> the token names run {} (read here, never inside check)
+",
+            run.as_str()
+        ),
+        None => "-> the token names no run (v1)
+"
+        .to_string(),
+    }
 }
 
 /// A short, human reason for a [`seal::SealError`], for `--explain`. See
@@ -269,10 +338,15 @@ fn run_check(args: &[String], explain: bool) -> (String, i32) {
         Err(message) => return (format!("{message}\n\n{USAGE}"), EXIT_USAGE),
     };
 
+    // Presenting splits the token into the run it names and the caveats it lists. Only
+    // the caveats reach `check`; the run is printed by `--explain` and used for nothing.
     if !explain {
-        return match check(token.as_bytes(), &request) {
-            Ok(_allowed) => ("Allowed".to_string(), 0),
+        return match present(token.as_bytes()) {
             Err(denial) => (format!("Denied: {denial:?}"), EXIT_DENIED),
+            Ok(presented) => match check(presented.caveats(), &request) {
+                Ok(_allowed) => ("Allowed".to_string(), 0),
+                Err(denial) => (format!("Denied: {denial:?}"), EXIT_DENIED),
+            },
         };
     }
 
@@ -295,7 +369,18 @@ fn run_check(args: &[String], explain: bool) -> (String, i32) {
             out.push_str("-> canonical target: ");
             out.push_str(&target_line(&target));
             out.push('\n');
-            match check(token.as_bytes(), &request) {
+            let presented = match present(token.as_bytes()) {
+                Ok(presented) => presented,
+                Err(denial) => {
+                    out.push_str("-> the token did not decode: ");
+                    out.push_str(&format!("{denial:?}"));
+                    out.push_str(" \u{2014} ");
+                    out.push_str(&denial_reason(denial));
+                    return (out, EXIT_DENIED);
+                }
+            };
+            out.push_str(&run_line(token.as_bytes()));
+            match check(presented.caveats(), &request) {
                 Ok(_allowed) => {
                     out.push_str("-> the token decoded, and lists this exact target -> Allowed");
                     (out, 0)
@@ -321,7 +406,7 @@ fn run_check(args: &[String], explain: bool) -> (String, i32) {
     }
 }
 
-fn run_seal(args: &[String], explain: bool) -> (String, i32) {
+fn run_seal(args: &[String], explain: bool, run: Option<&str>) -> (String, i32) {
     if args.is_empty() || !args.len().is_multiple_of(4) {
         return (
             format!(
@@ -389,7 +474,19 @@ fn run_seal(args: &[String], explain: bool) -> (String, i32) {
         narration.push('\n');
     }
 
-    match seal::seal(&caveat_set) {
+    let sealed = match run {
+        None => seal::seal(&caveat_set),
+        Some(id) => match RunId::new(id.as_bytes()) {
+            Ok(run) => seal::seal_for(run, &caveat_set),
+            Err(denial) => {
+                return (
+                    format!("--run {id:?} is not a run id: {}", denial_reason(denial)),
+                    EXIT_USAGE,
+                )
+            }
+        },
+    };
+    match sealed {
         Ok(token) => {
             if explain {
                 narration.push_str(&format!("sealed token: {token}"));
@@ -696,5 +793,127 @@ mod tests {
         assert!(output.contains("canonical target: GET https example.com /"));
         assert!(output.contains("the token did not decode"));
         assert!(output.contains("UnknownVersion"));
+    }
+
+    #[test]
+    fn seal_for_a_run_names_the_run_and_check_reads_it_back() {
+        let (seal_output, seal_code) = run(&args(&[
+            "seal",
+            "--run",
+            "run-1",
+            "GET",
+            "https",
+            "example.com",
+            "/orders",
+        ]));
+        assert_eq!(seal_code, 0);
+        let token = seal_output
+            .lines()
+            .next()
+            .and_then(|line| line.strip_prefix("token: "))
+            .expect("seal always prints a token line first");
+        assert!(token.starts_with("v2;run-1;"), "{token}");
+
+        let (output, code) = run(&args(&[
+            "check",
+            "--explain",
+            token,
+            "GET",
+            "https",
+            "example.com",
+            "/orders?page=2",
+        ]));
+        assert_eq!(code, 0);
+        assert!(output.contains("the token names run run-1"), "{output}");
+        assert!(output.contains("Allowed"), "{output}");
+    }
+
+    /// The run id changes the token's bytes and changes no answer.
+    #[test]
+    fn the_run_id_changes_no_verdict() {
+        let request = ["GET", "https", "example.com", "/orders"];
+        let mut tokens = Vec::new();
+        for extra in [vec![], vec!["--run", "r-1"], vec!["--run", "r-2"]] {
+            let mut argv = vec!["seal"];
+            argv.extend(extra);
+            argv.extend(request);
+            let (output, code) = run(&args(&argv));
+            assert_eq!(code, 0);
+            tokens.push(
+                output
+                    .lines()
+                    .next()
+                    .and_then(|line| line.strip_prefix("token: "))
+                    .expect("a token line")
+                    .to_string(),
+            );
+        }
+        assert_eq!(tokens.len(), 3);
+        for token in &tokens {
+            for (path, expected) in [("/orders", 0), ("/other", EXIT_DENIED)] {
+                let (_out, code) = run(&args(&[
+                    "check",
+                    token,
+                    "GET",
+                    "https",
+                    "example.com",
+                    path,
+                ]));
+                assert_eq!(code, expected, "{token} {path}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_v1_token_names_no_run() {
+        let (output, code) = run(&args(&[
+            "check",
+            "--explain",
+            "v1;http GET https example.com /orders",
+            "GET",
+            "https",
+            "example.com",
+            "/orders",
+        ]));
+        assert_eq!(code, 0);
+        assert!(output.contains("the token names no run"), "{output}");
+    }
+
+    #[test]
+    fn a_run_id_that_breaks_the_rules_is_a_usage_error() {
+        let (output, code) = run(&args(&[
+            "seal",
+            "--run",
+            "r 1",
+            "GET",
+            "https",
+            "example.com",
+            "/orders",
+        ]));
+        assert_eq!(code, EXIT_USAGE);
+        assert!(output.contains("is not a run id"), "{output}");
+    }
+
+    #[test]
+    fn run_without_an_id_and_run_on_the_wrong_subcommand_are_usage_errors() {
+        let (_output, code) = run(&args(&[
+            "seal",
+            "GET",
+            "https",
+            "example.com",
+            "/a",
+            "--run",
+        ]));
+        assert_eq!(code, EXIT_USAGE);
+        let (_output, code) = run(&args(&[
+            "observe",
+            "--run",
+            "r-1",
+            "GET",
+            "https",
+            "example.com",
+            "/a",
+        ]));
+        assert_eq!(code, EXIT_USAGE);
     }
 }

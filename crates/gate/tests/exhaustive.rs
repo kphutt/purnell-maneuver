@@ -20,7 +20,7 @@
     clippy::arithmetic_side_effects
 )]
 
-use gate::{check, observe, RequestFacts};
+use gate::{check, observe, present, RequestFacts};
 
 /// (method, scheme, authority, path, the destination a person says this names).
 type Labelled = (
@@ -201,7 +201,7 @@ fn every_observed_subset_allows_exactly_what_the_oracle_says() {
         for i in 0..n {
             let oracle =
                 label(i).is_some() && observed_indexes.iter().any(|&j| label(j) == label(i));
-            let actual = check(token.as_bytes(), &facts(i)).is_ok();
+            let actual = check(present(token.as_bytes()).unwrap().caveats(), &facts(i)).is_ok();
             assert_eq!(actual, oracle, "subset {subset:#b}, request {i}");
         }
     }

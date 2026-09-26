@@ -16,7 +16,7 @@
     clippy::arithmetic_side_effects
 )]
 
-use gate::{check, observe, Denial, RequestFacts, Target};
+use gate::{check, observe, present, Allowed, Denial, RequestFacts, RunId, Target};
 
 /// xorshift64 (Marsaglia, 2003): tiny, deterministic, good enough to pick test bytes.
 struct Rng(u64);
@@ -120,6 +120,21 @@ fn facts(fields: &[Vec<u8>; 4]) -> RequestFacts<'_> {
     }
 }
 
+/// Present, then check. A token this build cannot read is refused at the first step,
+/// and a caller gets one named answer either way.
+fn check_token(token: &[u8], request: &RequestFacts) -> Result<Allowed, Denial> {
+    check(present(token)?.caveats(), request)
+}
+
+/// Seals for a run half the time, so the `v2` grammar gets fuzzed as hard as `v1`.
+fn seal_maybe_for_a_run(rng: &mut Rng, set: &seal::CaveatSet) -> String {
+    if rng.below(2) == 0 {
+        return seal::seal(set).unwrap();
+    }
+    let run = RunId::new(b"r-fuzz-1").unwrap();
+    seal::seal_for(run, set).unwrap()
+}
+
 /// A deliberately dumb, independent re-parser of a `v1` token: the oracle for the
 /// mutated-token branch.
 ///
@@ -140,7 +155,9 @@ fn spelled_out(token: &[u8], request: &[Vec<u8>; 4]) -> bool {
         .split(|&byte| byte == b'?')
         .next()
         .unwrap_or_default();
-    token.split(|&byte| byte == b';').skip(1).any(|caveat| {
+    // Skip the version, and the run id too when the token names one.
+    let skip = if token.starts_with(b"v2;") { 2 } else { 1 };
+    token.split(|&byte| byte == b';').skip(skip).any(|caveat| {
         let fields: Vec<&[u8]> = caveat.split(|&byte| byte == b' ').collect();
         matches!(
             fields.as_slice(),
@@ -159,6 +176,7 @@ fn is_named(denial: Denial) -> bool {
         Denial::EmptyToken
             | Denial::TokenTooLong
             | Denial::UnknownVersion
+            | Denial::MalformedRunId
             | Denial::MalformedToken
             | Denial::UnknownCaveatKind
             | Denial::RequestTooLong
@@ -193,12 +211,14 @@ fn random_input_never_panics_and_always_gets_a_named_answer() {
                 let mut token = random_bytes(&mut rng, gate::MAX_TOKEN_BYTES);
                 // Give it the right version, and sometimes the right kind, so the body
                 // parser gets fuzzed too.
-                match rng.below(3) {
+                match rng.below(5) {
                     0 => drop(token.splice(0..0, b"v1;".iter().copied())),
                     1 => drop(token.splice(0..0, b"v1;http ".iter().copied())),
+                    2 => drop(token.splice(0..0, b"v2;".iter().copied())),
+                    3 => drop(token.splice(0..0, b"v2;r-1;http ".iter().copied())),
                     _ => {}
                 }
-                match check(&token, &facts(&request)) {
+                match check_token(&token, &facts(&request)) {
                     Ok(_) => panic!("round {round}: random token {token:?} allowed a request"),
                     Err(denial) => assert!(is_named(denial), "round {round}: {denial:?}"),
                 }
@@ -234,9 +254,9 @@ fn random_input_never_panics_and_always_gets_a_named_answer() {
                 } else {
                     request
                 };
-                let token = seal::seal(&seal::learn(&observed)).unwrap();
+                let token = seal_maybe_for_a_run(&mut rng, &seal::learn(&observed));
                 let listed = observe(&facts(&request)).is_ok_and(|t| observed.contains(&t));
-                match check(token.as_bytes(), &facts(&request)) {
+                match check_token(token.as_bytes(), &facts(&request)) {
                     Ok(_) => {
                         allow_hits += 1;
                         assert!(listed, "round {round}: allowed an unobserved request");
@@ -268,7 +288,8 @@ fn random_input_never_panics_and_always_gets_a_named_answer() {
                         target
                     })
                     .collect();
-                let mut token = seal::seal(&seal::learn(&observed)).unwrap().into_bytes();
+                let mut token =
+                    seal_maybe_for_a_run(&mut rng, &seal::learn(&observed)).into_bytes();
                 for _ in 0..1 + rng.below(3) {
                     let at = rng.below(token.len() + 1);
                     match rng.below(3) {
@@ -284,7 +305,7 @@ fn random_input_never_panics_and_always_gets_a_named_answer() {
                 } else {
                     request
                 };
-                match check(&token, &facts(&request)) {
+                match check_token(&token, &facts(&request)) {
                     Err(denial) => assert!(is_named(denial), "round {round}: {denial:?}"),
                     Ok(_) => {
                         mutated_allow_hits += 1;

@@ -3,9 +3,17 @@
 //!
 //! - [`observe`] turns what a server reports about a request ([`RequestFacts`]) into the
 //!   request's [`Target`]. While learning, observed targets go to `seal::learn`.
-//! - [`check`] decides whether a token allows a request. The answer is [`Allowed`] or a
-//!   named [`Denial`], never anything in between.
+//! - [`present`] splits a token into the run it was sealed for ([`RunId`], `v2` only)
+//!   and the destinations it lists ([`Caveats`]).
+//! - [`check`] decides whether those destinations allow a request. The answer is
+//!   [`Allowed`] or a named [`Denial`], never anything in between.
 //! - [`compare_secrets`] compares two secrets in constant time.
+//!
+//! **`check` takes the caveats, never the token.** A `v2` token carries a run id, an
+//! opaque label the caller supplies. `check` is handed [`Caveats`], an opaque handle
+//! over the caveat region alone: the id is not in those bytes, and the handle's field
+//! is private to the `token` crate, so there is no expression inside `check` that
+//! reaches the id. A caller that wants the id asks [`Presented::run`] for it.
 //!
 //! Both `observe` and `check` use the one canonicalizer in the `token` crate, so a
 //! request observed while learning and the same request checked later always get the
@@ -16,13 +24,13 @@
 #![no_std]
 
 pub use token::{
-    Denial, HttpTarget, McpFacts, McpTarget, RequestFacts, Target, MAX_AUTHORITY_BYTES,
-    MAX_MCP_METHOD_BYTES, MAX_MCP_NAME_BYTES, MAX_METHOD_BYTES, MAX_PATH_BYTES, MAX_SCHEME_BYTES,
-    MAX_TOKEN_BYTES,
+    present, Caveats, Denial, HttpTarget, McpFacts, McpTarget, Presented, RequestFacts, RunId,
+    Target, MAX_AUTHORITY_BYTES, MAX_MCP_METHOD_BYTES, MAX_MCP_NAME_BYTES, MAX_METHOD_BYTES,
+    MAX_PATH_BYTES, MAX_RUN_ID_BYTES, MAX_SCHEME_BYTES, MAX_TOKEN_BYTES,
 };
 
 use subtle::ConstantTimeEq;
-use token::{canonicalize, token_lists};
+use token::{canonicalize, lists};
 
 /// Proof that [`check`] allowed a request.
 ///
@@ -42,10 +50,12 @@ pub fn observe(request: &RequestFacts) -> Result<Target, Denial> {
     canonicalize(request)
 }
 
-/// Checks whether `token` allows `request`.
+/// Checks whether `caveats` allow `request`.
 ///
-/// - The target comes only from `request`. The token only lists destinations; it has
-///   no flags, modes, wildcards or options that change how this check runs.
+/// - The target comes only from `request`. The caveats only list destinations; there
+///   are no flags, modes, wildcards or options that change how this check runs, and a
+///   `v2` token's run id is not among the bytes this function is given. Get `caveats` from
+///   [`present`].
 /// - The token is not signed yet, so it proves nothing about who wrote it: a
 ///   hand-written token that lists a target in canonical form allows it.
 /// - The target must match a listed caveat exactly, byte for byte, after the
@@ -53,9 +63,9 @@ pub fn observe(request: &RequestFacts) -> Result<Target, Denial> {
 ///   constant-time comparison [`compare_secrets`] uses for secrets.
 /// - Every input is checked against its byte limit before it is read.
 /// - An empty caveat set allows nothing.
-pub fn check(token: &[u8], request: &RequestFacts) -> Result<Allowed, Denial> {
+pub fn check(caveats: Caveats<'_>, request: &RequestFacts) -> Result<Allowed, Denial> {
     let target = canonicalize(request)?;
-    if token_lists(token, &target)? {
+    if lists(caveats, &target)? {
         Ok(Allowed { _private: () })
     } else {
         Err(Denial::NotListed)
@@ -144,6 +154,12 @@ mod tests {
         }
     }
 
+    /// Present, then check. Every caller does these two steps; this keeps the tests
+    /// below reading as "does this token allow this request".
+    fn check_token(token: &[u8], request: &RequestFacts) -> Result<Allowed, Denial> {
+        check(present(token)?.caveats(), request)
+    }
+
     #[test]
     fn observe_is_the_canonicalizer() {
         let target = observe(&get("/a?x=1")).unwrap();
@@ -158,20 +174,33 @@ mod tests {
         let observed = [observe(&get("/a")).unwrap()];
         let token = token::encode(&token::learn(&observed)).unwrap();
         assert_eq!(
-            check(token.as_bytes(), &get("/a?page=2")),
+            check_token(token.as_bytes(), &get("/a?page=2")),
             Ok(Allowed { _private: () })
         );
-        assert_eq!(check(token.as_bytes(), &get("/b")), Err(Denial::NotListed));
+        assert_eq!(
+            check_token(token.as_bytes(), &get("/b")),
+            Err(Denial::NotListed)
+        );
     }
 
     #[test]
     fn an_empty_caveat_set_allows_nothing() {
-        assert_eq!(check(b"v1", &get("/")), Err(Denial::NotListed));
+        assert_eq!(check_token(b"v1", &get("/")), Err(Denial::NotListed));
+        assert_eq!(check_token(b"v2;r-1", &get("/")), Err(Denial::NotListed));
     }
 
     #[test]
-    fn a_bad_request_is_denied_before_the_token_is_read() {
-        assert_eq!(check(b"", &get("/a/../b")), Err(Denial::MalformedPath));
+    fn a_bad_token_is_denied_before_any_request_is_read() {
+        // Presenting happens first, so a token this build cannot read is refused
+        // without the request ever being canonicalized. The request below is malformed
+        // too, and the token's denial is the one that comes back.
+        assert_eq!(check_token(b"", &get("/a/../b")), Err(Denial::EmptyToken));
+    }
+
+    #[test]
+    fn a_bad_request_is_denied_before_the_caveats_are_read() {
+        let caveats = present(b"v1").unwrap().caveats();
+        assert_eq!(check(caveats, &get("/a/../b")), Err(Denial::MalformedPath));
     }
 
     /// KNOWN GAP, pinned on purpose: flip this test when tokens are signed. The token is
@@ -186,17 +215,56 @@ mod tests {
             ..get("/")
         };
         assert_eq!(
-            check(b"v1;http DELETE https example.com /admin", &delete_admin),
+            check_token(b"v1;http DELETE https example.com /admin", &delete_admin),
+            Ok(Allowed { _private: () })
+        );
+        assert_eq!(
+            check_token(
+                b"v2;r-1;http DELETE https example.com /admin",
+                &delete_admin
+            ),
             Ok(Allowed { _private: () })
         );
     }
 
     #[test]
     fn a_bad_token_is_denied_for_a_good_request() {
-        assert_eq!(check(b"", &get("/")), Err(Denial::EmptyToken));
-        assert_eq!(check(b"v9", &get("/")), Err(Denial::UnknownVersion));
-        assert_eq!(check(b"v1;NOPE", &get("/")), Err(Denial::MalformedToken));
-        assert_eq!(check(b"v1;nope", &get("/")), Err(Denial::UnknownCaveatKind));
+        assert_eq!(check_token(b"", &get("/")), Err(Denial::EmptyToken));
+        assert_eq!(check_token(b"v9", &get("/")), Err(Denial::UnknownVersion));
+        assert_eq!(
+            check_token(b"v1;NOPE", &get("/")),
+            Err(Denial::MalformedToken)
+        );
+        assert_eq!(
+            check_token(b"v1;nope", &get("/")),
+            Err(Denial::UnknownCaveatKind)
+        );
+        assert_eq!(check_token(b"v2", &get("/")), Err(Denial::MalformedRunId));
+        assert_eq!(
+            check_token(b"v2;r 1;http GET https example.com /", &get("/")),
+            Err(Denial::MalformedRunId)
+        );
+    }
+
+    /// The whole point of the split, stated as a test `gate` itself can make: the run id
+    /// is read by the caller, the caveats go to `check`, and every id gives the
+    /// same verdict for the same request.
+    #[test]
+    fn the_run_is_read_beside_the_check_and_never_inside_it() {
+        let observed = [observe(&get("/a")).unwrap()];
+        let set = token::learn(&observed);
+        for id in ["r-1", "r-2", "R-1"] {
+            let run = RunId::new(id.as_bytes()).unwrap();
+            let token = token::encode_for(run, &set).unwrap();
+            let presented = present(token.as_bytes()).unwrap();
+            assert_eq!(presented.run().map(|run| run.as_str()), Some(id));
+            assert!(check(presented.caveats(), &get("/a")).is_ok(), "{id}");
+            assert_eq!(
+                check(presented.caveats(), &get("/b")),
+                Err(Denial::NotListed),
+                "{id}"
+            );
+        }
     }
 
     #[test]

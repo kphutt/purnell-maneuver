@@ -1,6 +1,6 @@
 {
   "format": 1,
-  "about": "End-to-end cases: each case observes some raw requests, learns a caveat set from them, seals it into a token, then checks more raw requests against that token. No caveat or valid token is ever written here: the only way to a valid token is observe, learn, seal. 'bad_tokens' are hand-written malformed tokens, each checked against the request 'GET https api.example.com /orders'; none may ever be allowed. (A hand-written token that is exactly canonical is allowed today, because tokens are not signed yet; that known gap is pinned by a unit test in gate, never by a vector.) Expected values are 'allowed' or the snake_case of a gate::Denial variant. A request may also carry an optional 'mcp' object with 'method' and 'name', the two mirrored MCP header values; a request that carries it has an mcp target and one that does not has an http target, and the two never stand in for each other.",
+  "about": "End-to-end cases: each case observes some raw requests, learns a caveat set from them, seals it into a token, then checks more raw requests against that token. Every case is run twice, once against a v1 token (which names no run) and once against a v2 token sealed for a run: a run id may change no answer anywhere in this file, so one expectation covers both. No caveat or valid token is ever written here: the only way to a valid token is observe, learn, seal. 'bad_tokens' are hand-written malformed tokens, each checked against the request 'GET https api.example.com /orders'; none may ever be allowed. (A hand-written token that is exactly canonical is allowed today, because tokens are not signed yet; that known gap is pinned by a unit test in gate, never by a vector.) Expected values are 'allowed' or the snake_case of a gate::Denial variant. A request may also carry an optional 'mcp' object with 'method' and 'name', the two mirrored MCP header values; a request that carries it has an mcp target and one that does not has an http target, and the two never stand in for each other.",
   "cases": [
     {
       "name": "nothing_observed_allows_nothing",
@@ -1164,9 +1164,10 @@
       "expected": "empty_token"
     },
     {
-      "name": "unknown_version",
+      "name": "v2_body_read_as_a_run_id",
       "token": "v2;http GET https api.example.com /orders",
-      "expected": "unknown_version"
+      "expected": "malformed_run_id",
+      "note": "v2 names a run before its caveats, so this token's first piece is read as a run id and denied for the space in it -- never as a caveat."
     },
     {
       "name": "no_version",
@@ -1282,6 +1283,59 @@
       "note": "'=?base64?Z2V0X2RvY3VtZW50?=' decodes to 'get_document', which needs no wrapping. One value may have only one spelling, so the wrapped one denies rather than folding onto the plain one.",
       "token": "v1;mcp POST https mcp.example.com /mcp tools/call =?base64?Z2V0X2RvY3VtZW50?=",
       "expected": "malformed_token"
+    },
+    {
+      "name": "unknown_version",
+      "token": "v3;http GET https api.example.com /orders",
+      "expected": "unknown_version"
+    },
+    {
+      "name": "uppercase_v2",
+      "token": "V2;r-1",
+      "expected": "unknown_version"
+    },
+    {
+      "name": "v2_with_no_run_id",
+      "token": "v2",
+      "expected": "malformed_run_id",
+      "note": "v2 always names a run, so this is a token missing its id, not an empty-set token."
+    },
+    {
+      "name": "v2_with_an_empty_run_id",
+      "token": "v2;;http GET https api.example.com /orders",
+      "expected": "malformed_run_id"
+    },
+    {
+      "name": "v2_run_id_with_a_space",
+      "token": "v2;r 1;http GET https api.example.com /orders",
+      "expected": "malformed_run_id"
+    },
+    {
+      "name": "v2_run_id_with_a_dot",
+      "token": "v2;r.1;http GET https api.example.com /orders",
+      "expected": "malformed_run_id"
+    },
+    {
+      "name": "v2_run_id_over_the_limit",
+      "token": "v2;aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa;http GET https api.example.com /orders",
+      "expected": "malformed_run_id",
+      "note": "65 bytes; the limit is 64."
+    },
+    {
+      "name": "v2_gets_no_leniency_from_its_run_id",
+      "token": "v2;r-1;http GET https API.example.com /orders",
+      "expected": "malformed_token",
+      "note": "Every caveat rule holds unchanged under v2: the run id buys a caveat nothing."
+    },
+    {
+      "name": "v2_repeated_caveat",
+      "token": "v2;r-1;http GET https api.example.com /orders;http GET https api.example.com /orders",
+      "expected": "malformed_token"
+    },
+    {
+      "name": "v2_unknown_kind",
+      "token": "v2;r-1;queue orders.created",
+      "expected": "unknown_caveat_kind"
     }
   ]
 }
