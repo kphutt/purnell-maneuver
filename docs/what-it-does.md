@@ -128,6 +128,19 @@ Each of these is a limit the design chose.
 | **Fold two spellings into one destination.** | A merge is the main way an exact-match list fails open inside the canonicalizer. Every rule here refuses rather than tidies, and the cost — refusing requests a real client really sends — is accepted on purpose. |
 | **Parse raw HTTP itself.** | Every platform this library sits behind hands over a request it already parsed. Parsing the wire bytes here would be request-smuggling territory, and the quirks of the host's own parser are part of what a deployment trusts either way. |
 
+## What holds only because a deployment holds up its side
+
+Everything in list 1 is a guarantee about the code; none of it is a
+guarantee about a running system, because a running system is more than the code. Each guarantee
+below is conditioned on something no crate here can check, stated in the table below.
+
+| The guarantee holds only if | Otherwise |
+|---|---|
+| **`learn` runs only in a window the deployment trusts, and a person reads the learned set before it is enforced.** `learn` believes every request it is shown; nothing in the library tells a trusted request from an attacker's. | A request observed during learning becomes an allowed destination whether or not it should be one. |
+| **Learning and checking sit at the same point in the request chain**, and every hop in front of the gate that can rewrite a path -- a merging or normalizing proxy included -- is named as part of what the deployment trusts. | The two sides describe one request differently, which either denies traffic that should pass or lets two different requests share one caveat -- the same shape of bug as Istio's repeated-slash bypass (CVE-2021-31920) and Envoy's escaped-slash bypass (CVE-2021-29492). |
+| **The gate sits on every path a request can reach the destination by**, not only the one it was learned or tested against. A target carries no fact about which socket or listener a request arrived on. | One process serving two listeners that report the same host can allow, on the listener nobody meant to open up, whatever was learned on the other one. This is the deployment-facing edge of the listener gap above; until that gap closes, avoiding this shape is the deployment's job, not the library's. |
+| **The reader in front of the core hands it raw bytes, never a framework's tidied version, and denies wherever two sources of the same fact disagree.** The canonicalizer only ever sees what the reader hands it. | A reader that normalizes, or silently picks one of two disagreeing sources, hides from the canonicalizer exactly the spelling its no-merge rule exists to catch. |
+
 ## What on this page is checked, and what is not
 
 A page like this goes stale silently, so the facts that can be derived from the source are derived
