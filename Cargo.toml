@@ -5,6 +5,7 @@ members = ["crates/token", "crates/seal", "crates/gate"]
 [workspace.package]
 edition = "2021"
 publish = false
+license = "Apache-2.0"
 
 # Shared with every workspace member via `[lints] workspace = true` in each crate's
 # Cargo.toml, so the "no unsafe, no panics" rules live in one place. The checks run

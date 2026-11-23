@@ -3,6 +3,7 @@ name = "token"
 version = "0.1.0"
 edition.workspace = true
 publish.workspace = true
+license.workspace = true
 description = "purnell-maneuver shared core (no_std): the request canonicalizer, targets, caveat sets and the token format."
 
 [lib]
