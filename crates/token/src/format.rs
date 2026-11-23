@@ -105,7 +105,8 @@ use crate::canonical::canonicalize_stored;
 use crate::{CaveatSet, Denial, HttpTarget, McpFacts, RequestFacts, Target};
 
 /// The longest token accepted, in bytes. Checked before the token is read.
-/// 8 KiB fits in a single HTTP header on common servers and proxies.
+/// Some servers and proxies allow a single header less than 8 KiB, so a token near this
+/// size may not reach the gate. A deployment should check the header limit of every hop.
 pub const MAX_TOKEN_BYTES: usize = 8192;
 
 /// The longest run id a `v2` token may carry, in bytes. Checked before the id is read.

@@ -374,10 +374,11 @@ fn is_canonical_ipv6(text: &[u8]) -> bool {
 /// mixed, dotted notation for addresses with a well-known IPv4-embedding prefix, which
 /// gives `[::ffff:127.0.0.1]` for the same 128 bits. §4 alone would make the hex
 /// spelling canonical and the dotted one a denial; that is backwards, because the
-/// dotted one is what real software writes. Rust's `std::net::Ipv6Addr` and Python's
-/// `ipaddress` both serialise this prefix in the dotted form, so an adapter that reads
-/// `:authority` through its language's IP type and writes it back emits the spelling
-/// §4 rejects — every IPv4-mapped literal in such a deployment would be a false denial.
+/// dotted one is what real software writes. Rust's `std::net::Ipv6Addr` and the
+/// `ipaddress` module of Python 3.13 or later (the version this was confirmed on) both
+/// serialise this prefix in the dotted form, so an adapter that reads `:authority`
+/// through its language's IP type and writes it back emits the spelling §4 rejects —
+/// every IPv4-mapped literal in such a deployment would be a false denial.
 ///
 /// Accepting the dotted spelling as well would be a *widening* of a rule, which needs a new
 /// caveat kind (see `docs/canonicalizer.md`). Denying both is a tightening, which is safe
@@ -387,9 +388,9 @@ fn is_canonical_ipv6(text: &[u8]) -> bool {
 ///
 /// **This does not extend to the neighbouring well-known prefixes.** The NAT64 prefix
 /// `64:ff9b::/96` ([RFC 6052 §2.1](https://www.rfc-editor.org/rfc/rfc6052#section-2.1))
-/// is a well-known IPv4-embedding prefix too, but Rust and Python both leave it in hex,
-/// so no parser disagrees about how to write it and `[64:ff9b::c000:201]` stays
-/// accepted (vector `host_ipv6_nat64_prefix_kept`).
+/// is a well-known IPv4-embedding prefix too, but Rust and Python 3.13 or later both leave
+/// it in hex, so no parser checked here disagrees about how to write it and
+/// `[64:ff9b::c000:201]` stays accepted (vector `host_ipv6_nat64_prefix_kept`).
 fn is_ipv4_mapped(groups: &[u16; 8]) -> bool {
     matches!(groups, [0, 0, 0, 0, 0, 0xffff, _, _])
 }
@@ -516,9 +517,9 @@ fn drop_query(path_and_query: &[u8]) -> Result<&[u8], Denial> {
         .unwrap_or_default())
 }
 
-/// Path: compared exactly, byte for byte, with no transformation at all. Everything
-/// that is not already in its one canonical spelling, or that servers read
-/// differently, is denied:
+/// Path: compared exactly, byte for byte, with no transformation at all. A path that
+/// breaks a rule below is denied. Passing them does not mean every server reads the path
+/// the same way: see the README's "Known limits".
 ///
 /// - It must start with `/`.
 /// - Only these bytes may appear as-is: letters, digits, `- . _ ~`, and
@@ -1324,8 +1325,8 @@ mod tests {
     fn only_the_mapped_prefix_itself_is_denied() {
         // The rule is `::ffff:0:0/96` and nothing around it: one bit off the prefix,
         // and the address is an ordinary one with one RFC 5952 spelling again. The
-        // NAT64 prefix is a well-known IPv4-embedding prefix too, but Rust and Python
-        // both write it in hex, so nothing disagrees about it and it stays accepted.
+        // NAT64 prefix is a well-known IPv4-embedding prefix too, but Rust and Python 3.13
+        // or later both write it in hex, so neither disagrees about it and it stays accepted.
         for literal in [
             "[64:ff9b::c000:201]",
             "[::fffe:7f00:1]",

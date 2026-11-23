@@ -98,6 +98,9 @@ canonicalizer. That does not prove a real request happened, because a caller can
   their query share a destination, so this library cannot limit an API that picks its action from the query string.
 - The query is not validated beyond its raw bytes. Dot segments and encoded CRLF in it pass, so every hop behind the
   gate must split the query off first and must not decode it into a header.
+- A request reader must refuse `CONNECT` and any `Upgrade` unless that tunnel is meant to be allowed. The gate
+  cannot see inside one.
+- A token lists every destination in clear text, visible to every hop. Do not learn paths that contain secrets.
 - No request reader is included. Something in front of the core has to copy the raw request bytes into
   `RequestFacts` unchanged.
 - Learning and checking must see the same request. If a proxy rewrites paths, take both views from the same side of
@@ -118,7 +121,7 @@ These apply to all three crates:
 - No I/O: no files, network, clock or threads.
 - `no_std` with `alloc`.
 - No panics in library code. Clippy's panic lints are errors, with tests exempt.
-- No `unsafe` code, enforced by a workspace lint.
+- No `unsafe` code in these three crates, enforced by a workspace lint.
 - Plain data in and out. A failed call returns one of a fixed list of named cases.
 - Secrets are compared as raw bytes in constant time, never case-folded or normalized first.
 - Every core dependency must build for `wasm32v1-none`.

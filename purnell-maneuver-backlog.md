@@ -74,6 +74,8 @@ This repo has no tagged releases. To point at an exact state, link to its commit
 | B-12 | Mutation tests | P2 | M | Check that the tests catch a deliberately broken rule | Run `cargo mutants --workspace` | Each survivor is fixed or recorded as equivalent |
 | B-13 | Finish the Kani proofs | P2 | M | Some proofs do not finish | Stub `ascii_to_string` | Each proof verifies or lists why it cannot |
 | B-14 | Run the checks on GitHub | P2 | S | The checks run through local git hooks, so a clone without them has no gate | Add a workflow that runs the pre-push commands | A pull request runs the same commands as the pre-push hook |
+| B-17 | Make `try --explain` check the token first | P2 | S | `try --explain` and plain `try` can report different denials for the same bad token | Run the token check before the explanation | `try --explain` reports the same denial as plain `try` for every bad token in the flow vectors |
+| B-18 | Add a Rust usage example to the README | P2 | S | The README has no short Rust example and no dependency line | Write a short learn, seal and check example, and the dependency line | The example compiles and its output matches the README |
 
 ## What I'd do next
 
