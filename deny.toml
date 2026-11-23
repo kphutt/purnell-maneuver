@@ -1,10 +1,11 @@
 # cargo-deny config for purnell-maneuver. Run with `cargo deny --locked check` (also
 # wired into the pre-push hook; see .pre-commit-config.yaml). Install with:
 #   cargo install --locked cargo-deny --version 0.20.2
+# See AGENTS.md for the pinned version and the reasoning behind each section below.
 
 [graph]
 # `targets = []` checks every platform, with no per-platform allowances. The core must
-# also build for wasm32v1-none.
+# also build for wasm32v1-none (see README.md, "Design rules").
 targets = []
 
 [advisories]
@@ -41,7 +42,7 @@ deny = [
     { crate = "native-tls" },
 ]
 
-# No package may run code at build time unless explicitly approved:
+# No package may run code at build time unless explicitly approved (see AGENTS.md):
 # the core and its tests allow zero build scripts and zero proc-macros today, so
 # `allow-build-scripts` is empty. A binding added later (pyo3, wasm-bindgen) will need
 # one; add it here by name as its own reviewed change, never by widening this to

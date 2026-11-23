@@ -145,7 +145,7 @@ fn seal_maybe_for_a_run(rng: &mut Rng, set: &seal::CaveatSet) -> String {
 /// path up to the first `?` is that caveat's path.
 ///
 /// The `?` is the only thing this re-parser knows beyond splitting: dropping the query
-/// is the canonicalizer's one documented merge. Every other rule
+/// is the canonicalizer's one documented merge (see `docs/canonicalizer.md`). Every other rule
 /// denies rather than rewrites, so an allowed request's raw bytes and the caveat it
 /// matched must otherwise be identical. Being written here, by hand, from the token
 /// grammar in `format.rs` rather than from the encoder matters: a bug shared by

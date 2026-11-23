@@ -14,7 +14,8 @@
 //!
 //! for example `GET https example.com /orders?x=1`. Every byte is passed to
 //! `gate::observe` exactly as typed: nothing here lowercases, decodes or otherwise
-//! tidies it. That is the canonicalizer's job, not this CLI's.
+//! tidies it. That is the canonicalizer's job (see `docs/canonicalizer.md`),
+//! not this CLI's.
 //!
 //! This CLI seals only what the canonicalizer accepted, and has no way to type a caveat and
 //! have it sealed. The request itself is whatever you pass, and `check` takes any token

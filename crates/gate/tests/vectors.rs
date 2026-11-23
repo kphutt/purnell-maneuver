@@ -11,7 +11,7 @@
 //! JSON reading uses `tinyjson` (no build script, no proc-macro, no non-dev
 //! dependencies of its own) rather than `serde`/`serde_json`, and hex decoding is a
 //! few lines below rather than the `hex` crate, so this test-only dependency tree
-//! stays free of build scripts and proc-macros too.
+//! stays free of build scripts and proc-macros too: see AGENTS.md.
 //!
 //! `unwrap`/`expect`/`panic!` are used freely below: a test fails by panicking, so the
 //! panic lints from `[workspace.lints.clippy]` are allowed at the top of this file

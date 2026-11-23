@@ -19,7 +19,7 @@
 //! folds nothing. A scheme, host or IPv6 literal that is not already lowercase is
 //! denied, like every other input that is not already canonical. The one thing it fills
 //! in is the scheme's default port, and only when no port is given. A false denial is
-//! the accepted cost.
+//! the accepted cost. The rule table is in `docs/canonicalizer.md`.
 //!
 //! **Folding nothing is not the same as rewriting nothing.** The rule the policy needs
 //! is that the map from request to target is *injective*: apart from the dropped query,
@@ -379,11 +379,11 @@ fn is_canonical_ipv6(text: &[u8]) -> bool {
 /// `:authority` through its language's IP type and writes it back emits the spelling
 /// §4 rejects — every IPv4-mapped literal in such a deployment would be a false denial.
 ///
-/// Accepting the dotted spelling as well would be a *widening* of a rule, which needs a
-/// new caveat kind. Denying both is a tightening, which is safe in place: an existing
-/// token that lists one of these stops reading back and denies as a whole. False
-/// denials for IPv4-mapped literals are the accepted cost, and they are the same cost
-/// either spelling arrives in.
+/// Accepting the dotted spelling as well would be a *widening* of a rule, which needs a new
+/// caveat kind (see `docs/canonicalizer.md`). Denying both is a tightening, which is safe
+/// in place: an existing token that lists one of these stops reading back and denies as a
+/// whole. False denials for IPv4-mapped literals are the accepted cost, and they are the
+/// same cost either spelling arrives in.
 ///
 /// **This does not extend to the neighbouring well-known prefixes.** The NAT64 prefix
 /// `64:ff9b::/96` ([RFC 6052 §2.1](https://www.rfc-editor.org/rfc/rfc6052#section-2.1))

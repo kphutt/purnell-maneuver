@@ -159,7 +159,7 @@ impl HttpTarget {
 
     /// The port the authority names, filled in from the scheme when it names none. It
     /// comes from the authority bytes and nothing else; a request carries no other port
-    /// today.
+    /// today (see the README's "Known limits").
     pub fn port(&self) -> u16 {
         self.port
     }

@@ -20,7 +20,7 @@
 //! same target. `gate` never reads the token format itself; only the `token` crate's
 //! format module does.
 //!
-//! `no_std`, no `unsafe`, and no panics outside tests.
+//! `no_std`, no `unsafe`, and no panics outside tests: see the README's "Design rules".
 #![no_std]
 
 pub use token::{
@@ -57,7 +57,8 @@ pub fn observe(request: &RequestFacts) -> Result<Target, Denial> {
 ///   `v2` token's run id is not among the bytes this function is given. Get `caveats` from
 ///   [`present`].
 /// - The token is not signed yet, so it proves nothing about who wrote it: a
-///   hand-written token that lists a target in canonical form allows it.
+///   hand-written token that lists a target in canonical form allows it. See the README's
+///   "Known limits".
 /// - The target must match a listed caveat exactly, byte for byte, after the
 ///   canonicalizer. Targets are not secret, so this is plain equality, not the
 ///   constant-time comparison [`compare_secrets`] uses for secrets.
@@ -75,7 +76,8 @@ pub fn check(caveats: Caveats<'_>, request: &RequestFacts) -> Result<Allowed, De
 /// The result of comparing two secrets.
 ///
 /// A named enum rather than a bare `bool`, so a caller can't mix up which value means
-/// "matched". Bytes in, a small named enum out, nothing else.
+/// "matched". This follows the README's "Design rules": bytes in, a small named enum out,
+/// nothing else.
 ///
 /// `#[non_exhaustive]`: a later version may add a variant (for example a
 /// finer-grained "matched, but one side was empty" case). `#[non_exhaustive]` lets that
@@ -118,7 +120,7 @@ pub enum GateError {
 /// Compares two secrets as raw bytes, in constant time.
 ///
 /// This never case-folds or normalizes its inputs — it compares exactly the bytes
-/// given. For any two inputs no longer than
+/// given, per the README's "Design rules". For any two inputs no longer than
 /// [`MAX_INPUT_LEN`], comparison time does not depend on where the first differing
 /// byte falls. As with any constant-time comparison, the *lengths* of `a` and `b` are
 /// not kept secret: the underlying `subtle` comparison returns early when the lengths

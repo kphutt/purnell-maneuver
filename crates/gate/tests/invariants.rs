@@ -21,7 +21,7 @@
 //!   path bytes are identical (nothing is case-folded), and their ports are equal (an
 //!   absent port counting as the scheme's default). The query is the one named
 //!   exception: it is dropped, so requests that differ only there share a target on
-//!   purpose.
+//!   purpose (see `docs/canonicalizer.md`).
 //! - **Totality and bounded cost**: any bytes, up to and past the limits, give a target
 //!   or a named denial, never a panic, and a target is never longer than the limits.
 //! - **One value, one spelling** (the `mcp` kind): no two accepted `Mcp-Method` or

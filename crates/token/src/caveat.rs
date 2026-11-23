@@ -9,7 +9,7 @@
 //!
 //! That is a property of the types, not of tokens. Until tokens are signed, anyone who
 //! can write the token header can write a canonical caveat by hand, and `gate`
-//! will honor it.
+//! will honor it: see the README's "Known limits".
 
 use alloc::collections::BTreeSet;
 use alloc::vec::Vec;

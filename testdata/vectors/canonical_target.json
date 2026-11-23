@@ -2122,7 +2122,7 @@
     },
     {
       "name": "attack_accepted_istio_trailing_question",
-      "note": "Istio CVE-2020-8595 / ISTIO-SECURITY-2020-001: appending '?' or '#' to a URI defeated an exact-path JWT rule, because the policy compared the whole request target while Envoy routed on the path alone. Accepted, and on purpose the same target as the case above: the query is dropped, which is the one merge the canonicalizer makes. Dropping it is the side Envoy routes on, so this pair closes the CVE rather than reproducing it.",
+      "note": "Istio CVE-2020-8595 / ISTIO-SECURITY-2020-001: appending '?' or '#' to a URI defeated an exact-path JWT rule, because the policy compared the whole request target while Envoy routed on the path alone. Accepted, and on purpose the same target as the case above: the query is dropped, which is the one merge the canonicalizer makes (see docs/canonicalizer.md). Dropping it is the side Envoy routes on, so this pair closes the CVE rather than reproducing it.",
       "request": {
         "method": "GET",
         "scheme": "https",

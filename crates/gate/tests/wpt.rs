@@ -12,7 +12,7 @@
 //!    none is given) and path are exactly WHATWG's `hostname`, `port` and `pathname`.
 //! 3. No two accepted inputs share a target unless WHATWG also gives them the same
 //!    protocol, hostname, port and pathname. The query is not compared: dropping it is
-//!    the one merge the canonicalizer makes on purpose.
+//!    the one merge the canonicalizer makes on purpose (see `docs/canonicalizer.md`).
 //!
 //! The input is split into raw request facts the way a server would receive them:
 //! scheme before `://`, authority up to the first `/`, `?` or `#`, and the rest as the

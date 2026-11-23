@@ -96,7 +96,7 @@
 //!
 //! The token is not signed yet. The grammar above is public, so anyone who can write
 //! the token header can list any canonical target by hand, and [`lists`] will
-//! honor it.
+//! honor it. The README lists this as a known limit until signing lands.
 
 use alloc::string::String;
 use alloc::vec::Vec;

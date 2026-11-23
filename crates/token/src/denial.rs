@@ -46,7 +46,7 @@ pub enum Denial {
     /// The port is empty, zero, has a leading zero, is not all digits, is above
     /// 65535, or is the scheme's default written out (`:443` on https, `:80` on http).
     MalformedPort,
-    /// The path breaks one of the path rules.
+    /// The path breaks one of the path rules (see `docs/canonicalizer.md`).
     MalformedPath,
     /// The `Mcp-Method` value breaks one of the MCP value rules: it is empty, carries a
     /// byte that is not printable ASCII (so a control byte or a non-ASCII one), is

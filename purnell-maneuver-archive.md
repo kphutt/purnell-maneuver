@@ -1,0 +1,15 @@
+# purnell-maneuver archive
+
+Closed work, newest first. Open work is in [purnell-maneuver-backlog.md](purnell-maneuver-backlog.md).
+
+**Links:** [repo](https://github.com/kphutt/purnell-maneuver), [board](purnell-maneuver-backlog.md), [notes](purnell-maneuver-notes.md). There is no live site.
+
+| # | Closed | Item | What wrapped up | Commits |
+|---|---|---|---|---|
+| <a id="b-7"></a>B-7 | 2026-11-23 | License and project docs | The Apache-2.0 license, README, contributor guide, backlog, archive and notes | [350e329](https://github.com/kphutt/purnell-maneuver/commit/350e329f9b76861234b3af56d705b085ca4f1bac) and the commit that adds this file |
+| <a id="b-6"></a>B-6 | 2026-09-27 | What the library does | One page of what it does, what it does not do yet, what it will never do, and what a deployment must hold true | [5d18980](https://github.com/kphutt/purnell-maneuver/commit/5d1898064087974cab3ea79eefd95ad8baa91968) [f2add04](https://github.com/kphutt/purnell-maneuver/commit/f2add046a9435cbf4ed87a7f229d02e63ce8d5d2) |
+| <a id="b-4"></a>B-4 | 2026-09-25 | MCP destinations | The `mcp` caveat kind and one stored spelling for every value | [13e9ec9](https://github.com/kphutt/purnell-maneuver/commit/13e9ec99438096d53e911c4e5af978e26e57bd9d) [ad7dfd8](https://github.com/kphutt/purnell-maneuver/commit/ad7dfd8348471c020499a323a7dc64a9700e214d) |
+| <a id="b-5"></a>B-5 | 2026-09-25 | Run ids | The `v2` token, which names a run the check cannot read | [fcc6920](https://github.com/kphutt/purnell-maneuver/commit/fcc6920a3119b361cf15ce915e2c7c63053a623f) |
+| <a id="b-3"></a>B-3 | 2026-09-24 | Canonicalizer hardening | Published attack payloads, UTF-8 rules, byte-class tests, stronger test oracles and Kani proofs | [a91e0e4](https://github.com/kphutt/purnell-maneuver/commit/a91e0e402ea7f9a38d6b261bb5e0ba35db0af4c8) [9c6761a](https://github.com/kphutt/purnell-maneuver/commit/9c6761a37b239ec745fd72477a18d42880d801cc) [c344521](https://github.com/kphutt/purnell-maneuver/commit/c344521c0c271a3b96d147ad07daf5b506e16f37) [621feae](https://github.com/kphutt/purnell-maneuver/commit/621feae09e5d65ef24a1141ee29d02b7646d432a) [c25142e](https://github.com/kphutt/purnell-maneuver/commit/c25142e28b8731e55b1ac6aa123b19ee6f2b9887) [ec570a4](https://github.com/kphutt/purnell-maneuver/commit/ec570a4d00800bdb2343b95be7270597b4fce5a2) |
+| <a id="b-2"></a>B-2 | 2026-09-23 | Core flow | Observe, learn, seal and check, with one canonicalizer and a command-line walkthrough | [5776e7e](https://github.com/kphutt/purnell-maneuver/commit/5776e7eaca8da2a96bfa0ceccdd2e4a82936169c) [218392d](https://github.com/kphutt/purnell-maneuver/commit/218392d65ec1b4766671666489c77e5acf3e006f) |
+| <a id="b-1"></a>B-1 | 2026-09-21 | Workspace and supply-chain setup | The Cargo workspace, its lint rules, and the checks that keep build-time code out | [af8e966](https://github.com/kphutt/purnell-maneuver/commit/af8e96648eb4de935bb3c7207fbeb8bb08976182) [85b3f38](https://github.com/kphutt/purnell-maneuver/commit/85b3f38912aae23563449c7d034e3d9ed840ab75) |

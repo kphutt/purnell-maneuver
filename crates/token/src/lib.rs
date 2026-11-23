@@ -13,7 +13,7 @@
 //!   to get a caveat set is [`learn`], from targets that came out of [`canonicalize`],
 //!   and no public function turns text into a caveat. That holds for code; it does not
 //!   stop a person from writing a token by hand, which `gate` honors until tokens
-//!   are signed.
+//!   are signed (see the README's "Known limits").
 //! - [`encode`], [`encode_for`], [`present`] and [`lists`]: the token's byte format.
 //!   They live in one small private module, and nothing else in the workspace knows the
 //!   format.
@@ -26,7 +26,8 @@
 //! Most callers use `gate` (observe, check) and `seal` (learn, seal) instead of this
 //! crate directly.
 //!
-//! `no_std` + `alloc`, no `unsafe`, no panics, and no dependencies.
+//! `no_std` + `alloc`, no `unsafe`, no panics, and no dependencies: see the README's
+//! "Design rules".
 #![no_std]
 
 extern crate alloc;

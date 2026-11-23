@@ -12,7 +12,7 @@
 //! destinations. The format lives in the `token` crate, in one module, and `seal` never
 //! writes token bytes itself.
 //!
-//! `no_std`, no `unsafe`, and no panics outside tests.
+//! `no_std`, no `unsafe`, and no panics outside tests: see the README's "Design rules".
 #![no_std]
 
 extern crate alloc;
