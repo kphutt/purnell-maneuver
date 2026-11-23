@@ -133,19 +133,49 @@ Each of these is a limit the design chose.
 
 Everything in list 1 is a guarantee about the code; none of it is a guarantee about a running
 system, because a running system is more than the code. Each guarantee below is conditioned on
-something no crate here can check, covered in the README's "Known limits" and in
+something no crate here can check, covered in "Known limits" below and in
 `docs/canonicalizer.md`.
 
 | The guarantee holds only if | Otherwise |
 |---|---|
-| **`learn` runs only in a window the deployment trusts, and a person reads the learned set before it is enforced.** `learn` believes every request it is shown; nothing in the library tells a trusted request from an attacker's. | A request observed during learning becomes an allowed destination whether or not it should be one. See "Known limits" in the README. |
-| **Learning and checking sit at the same point in the request chain**, and every hop in front of the gate that can rewrite a path -- a merging or normalizing proxy included -- is named as part of what the deployment trusts. | The two sides describe one request differently, which either denies traffic that should pass or lets two different requests share one caveat -- the same shape of bug as Istio's repeated-slash bypass (CVE-2021-31920) and Envoy's escaped-slash bypass (CVE-2021-29492). See "Known limits" in the README. |
-| **The gate sits on every path a request can reach the destination by**, not only the one it was learned or tested against. A target carries no fact about which socket or listener a request arrived on. | One process serving two listeners that report the same host can allow, on the listener nobody meant to open up, whatever was learned on the other one. This is the deployment-facing edge of the listener gap above; until that gap closes, avoiding this shape is the deployment's job, not the library's. See "Known limits" in the README. |
-| **The layer in front of the library refuses a request that has no MCP protocol version, or one older than the revision that requires the mirrored headers.** The library never reads the version. | A request with no mirrored headers has no MCP fields to read, so it would be checked as a plain POST. That can allow other requests read the same way. See "Known limits" in the README. |
-| **The destination rejects an MCP request whose headers and body disagree.** The library reads the headers and never the body. | An allowed header can front a different call. See "Known limits" in the README. |
-| **Every hop behind the gate splits the query off first and never decodes it into a header.** The library drops the query after a check of its raw bytes, and does not parse it. | A dot segment or an encoded CRLF in the query passes the check and could be acted on by a hop that decodes it. See "Known limits" in the README. |
-| **No server behind the gate reads two spellings the gate keeps apart as one resource.** The gate keeps them apart and cannot know how the destination reads them. | IIS can ignore a trailing dot, and some character mappings turn the encoded full-width slash `%EF%BC%8F` into a real slash, so a destination can treat two different allowed paths as one resource. See "Known limits" in the README. |
+| **`learn` runs only in a window the deployment trusts, and a person reads the learned set before it is enforced.** `learn` believes every request it is shown; nothing in the library tells a trusted request from an attacker's. | A request observed during learning becomes an allowed destination whether or not it should be one. See "Known limits" below. |
+| **Learning and checking sit at the same point in the request chain**, and every hop in front of the gate that can rewrite a path -- a merging or normalizing proxy included -- is named as part of what the deployment trusts. | The two sides describe one request differently, which either denies traffic that should pass or lets two different requests share one caveat -- the same shape of bug as Istio's repeated-slash bypass (CVE-2021-31920) and Envoy's escaped-slash bypass (CVE-2021-29492). See "Known limits" below. |
+| **The gate sits on every path a request can reach the destination by**, not only the one it was learned or tested against. A target carries no fact about which socket or listener a request arrived on. | One process serving two listeners that report the same host can allow, on the listener nobody meant to open up, whatever was learned on the other one. This is the deployment-facing edge of the listener gap above; until that gap closes, avoiding this shape is the deployment's job, not the library's. See "Known limits" below. |
+| **The layer in front of the library refuses a request that has no MCP protocol version, or one older than the revision that requires the mirrored headers.** The library never reads the version. | A request with no mirrored headers has no MCP fields to read, so it would be checked as a plain POST. That can allow other requests read the same way. See "Known limits" below. |
+| **The destination rejects an MCP request whose headers and body disagree.** The library reads the headers and never the body. | An allowed header can front a different call. See "Known limits" below. |
+| **Every hop behind the gate splits the query off first and never decodes it into a header.** The library drops the query after a check of its raw bytes, and does not parse it. | A dot segment or an encoded CRLF in the query passes the check and could be acted on by a hop that decodes it. See "Known limits" below. |
+| **No server behind the gate reads two spellings the gate keeps apart as one resource.** The gate keeps them apart and cannot know how the destination reads them. | IIS can ignore a trailing dot, and some character mappings turn the encoded full-width slash `%EF%BC%8F` into a real slash, so a destination can treat two different allowed paths as one resource. See "Known limits" below. |
 | **The reader in front of the core hands it raw bytes, never a framework's tidied version, and denies wherever two sources of the same fact disagree.** The canonicalizer only ever sees what the reader hands it. | A reader that normalizes, or silently picks one of two disagreeing sources, hides from the canonicalizer exactly the spelling its no-merge rule exists to catch. See "Reading a request" in `docs/canonicalizer.md`. |
+
+## Known limits
+
+- Tokens are not signed. Anyone who can set the token header can write a canonical destination, and it is allowed.
+  The test `known_gap_until_signing_a_hand_written_canonical_token_is_allowed` records this.
+- Learning trusts what it observes. Run it only in a window you trust, and have a person approve each learned
+  destination before enforcing the set.
+- MCP checks trust the mirrored headers and do not read the body. The destination must reject a request whose
+  headers and body disagree, [as MCP requires](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http#server-validation).
+  Without that check, an allowed header can front a different call.
+- The library does not read the MCP protocol version. The layer in front of it must refuse a missing version, or one
+  that does not require the header check.
+- MCP calls with no name have no caveat. A method such as `tools/list` has no name to mirror, so a request reader must
+  refuse it. Passing it as plain HTTP would learn the bare POST, which then allows other requests read the same way.
+- The query is dropped after a check for raw control, space and non-ASCII bytes. Requests that differ only in
+  their query share a destination, so this library cannot limit an API that picks its action from the query string.
+- The query is not validated beyond its raw bytes. Dot segments and encoded CRLF in it pass, so every hop behind the
+  gate must split the query off first and must not decode it into a header.
+- A request reader must refuse `CONNECT` and any `Upgrade` unless that tunnel is meant to be allowed. The gate
+  cannot see inside one.
+- A token lists every destination in clear text, visible to every hop. Do not learn paths that contain secrets.
+- No request reader is included. Something in front of the core has to copy the raw request bytes into
+  `RequestFacts` unchanged.
+- Learning and checking must see the same request. If a proxy rewrites paths, take both views from the same side of
+  that proxy.
+- The gate must be on every path to the destination. A destination does not record which socket or listener a request
+  arrived on.
+- Some spellings open more than they appear to. A server behind the gate can send two paths the gate keeps apart to
+  one resource. IIS can ignore a trailing dot, and some character mappings turn the encoded full-width slash
+  `%EF%BC%8F` into a real slash.
 
 ## What on this page is checked, and what is not
 
