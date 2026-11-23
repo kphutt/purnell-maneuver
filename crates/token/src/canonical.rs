@@ -496,11 +496,18 @@ fn canonical_port(port: &[u8], scheme: Scheme) -> Result<u16, Denial> {
     }
 }
 
-/// Drops the query: it is never part of a target. A fragment is never sent in a request
-/// target (RFC 9112 §3.2), so a `#` anywhere means something upstream is confused, and
-/// it denies.
+/// Drops the query: it is never part of a target, but its bytes are read first.
+///
+/// A fragment is never sent in a request target (RFC 9112 §3.2), so a `#` anywhere means
+/// something upstream is confused, and it denies. So does any byte outside
+/// `0x21..=0x7E`: a raw CR or LF could inject a header if a host forwards the target,
+/// and RFC 3986 allows neither a space nor a non-ASCII byte in a query. The path rules
+/// deny the same bytes, so one scan of the whole field covers both parts.
 fn drop_query(path_and_query: &[u8]) -> Result<&[u8], Denial> {
-    if path_and_query.contains(&b'#') {
+    if path_and_query
+        .iter()
+        .any(|&byte| byte == b'#' || !matches!(byte, 0x21..=0x7E))
+    {
         return Err(Denial::MalformedPath);
     }
     Ok(path_and_query

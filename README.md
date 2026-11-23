@@ -94,8 +94,10 @@ canonicalizer. That does not prove a real request happened, because a caller can
   that does not require the header check.
 - MCP calls with no name have no caveat. A method such as `tools/list` has no name to mirror, so a request reader must
   refuse it. Passing it as plain HTTP would learn the bare POST, which then allows other requests read the same way.
-- The query is dropped. Requests that differ only in their query share a destination, so this library cannot limit
-  an API that picks its action from the query string.
+- The query is dropped after a check for raw control, space and non-ASCII bytes. Requests that differ only in
+  their query share a destination, so this library cannot limit an API that picks its action from the query string.
+- The query is not validated beyond its raw bytes. Dot segments and encoded CRLF in it pass, so every hop behind the
+  gate must split the query off first and must not decode it into a header.
 - No request reader is included. Something in front of the core has to copy the raw request bytes into
   `RequestFacts` unchanged.
 - Learning and checking must see the same request. If a proxy rewrites paths, take both views from the same side of

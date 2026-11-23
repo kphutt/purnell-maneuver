@@ -61,8 +61,8 @@
       }
     },
     {
-      "name": "query_content_is_not_read",
-      "note": "Nothing after '?' is parsed, so nothing there can deny (except '#', below).",
+      "name": "query_content_is_not_parsed",
+      "note": "The query is not parsed, so its structure cannot deny. Only its bytes are read: '#' and anything outside 0x21..=0x7E deny.",
       "request": {
         "method": "GET",
         "scheme": "https",
@@ -4085,6 +4085,124 @@
       },
       "expected": {
         "denial": "malformed_mcp_name"
+      }
+    },
+    {
+      "name": "query_crlf_denied",
+      "note": "A raw CRLF in the query could inject a header if a host forwards the target.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?\r\nX-Injected: 1"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "query_lf_denied",
+      "note": "A raw LF ends a line for a lenient HTTP parser.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?a\nb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "query_space_denied",
+      "note": "A raw space ends the request target in HTTP/1.1.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?a b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "query_control_byte_denied",
+      "note": "A raw control byte is never valid in a query.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?a\u0001b"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "query_del_denied",
+      "note": "DEL is outside the printable ASCII range.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?a\u007fb"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "query_non_ascii_denied",
+      "note": "A query must be ASCII on the wire. A client percent-encodes anything else.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?café"
+      },
+      "expected": {
+        "denial": "malformed_path"
+      }
+    },
+    {
+      "name": "query_valid_bytes_stay_allowed",
+      "note": "Printable ASCII is accepted, and the query is still dropped.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?a=1&b=%20!~"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/orders",
+          "authority": "example.com"
+        }
+      }
+    },
+    {
+      "name": "query_encoded_crlf_stays_allowed",
+      "note": "A percent-encoded CRLF is plain printable ASCII in the query.",
+      "request": {
+        "method": "GET",
+        "scheme": "https",
+        "authority": "example.com",
+        "path": "/orders?a=%0D%0A"
+      },
+      "expected": {
+        "target": {
+          "method": "GET",
+          "scheme": "https",
+          "host": "example.com",
+          "port": 443,
+          "path": "/orders",
+          "authority": "example.com"
+        }
       }
     }
   ]

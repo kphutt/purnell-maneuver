@@ -129,7 +129,6 @@ const EXPECTED_ACCEPTED: &[&str] = &[
     "http://example.org/test?%GH",
     "http://example.org/test?<",
     "http://example.org/test?>",
-    "http://example.org/test?⌣",
     "http://facebook.com/?foo=%7B%22abc%22",
     "http://foo/abcd?efgh?ijkl",
     "http://foo:81/",
@@ -138,8 +137,6 @@ const EXPECTED_ACCEPTED: &[&str] = &[
     "http://www.google.com",
     "https://foo:80/",
     "https://localhost:3000/jqueryui@1.2.3",
-    "https://x/?\0y",
-    "https://x/?\u{ffff}y",
     "https://xn--/",
 ];
 
@@ -242,7 +239,7 @@ fn whatwg_url_test_data_agrees_where_the_canonicalizer_accepts() {
     // them all, both would pass with no signal. This floor keeps that non-vacuous even
     // if someone empties the list below rather than updating it.
     assert!(
-        accepted >= 34,
+        accepted >= 31,
         "the WPT oracle accepted {accepted} inputs; claims 2 and 3 are now vacuous"
     );
     // The real assertion is the set, not the count: a count cannot see a change that

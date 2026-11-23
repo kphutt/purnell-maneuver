@@ -14,7 +14,7 @@ canonical form is denied rather than tidied. The README's "Known limits" lists f
 | IPv6 host | Not changed | Not bracketed, not in RFC 5952 form, a zone id, or an IPv4-mapped address |
 | User info | Not applicable | Any `@` in the authority |
 | Port | If absent, filled in from the scheme (80 or 443) | The scheme's default written out, empty, a leading zero, not all digits, or above 65535 |
-| Query | Dropped | A `#` in it still denies |
+| Query | Dropped after its bytes are read | A `#`, or a raw byte outside `0x21..=0x7E`: a control byte, space, DEL or non-ASCII byte |
 | Fragment | Not applicable | A `#` anywhere |
 | Path shape | Not changed | Not starting with `/`, a `.` or `..` segment, or an empty segment other than a trailing `/` |
 | Path bytes | Not changed | A byte outside letters, digits and `- . _ ~ ! $ & ' ( ) * + , = : @ /`, unless percent-encoded |
@@ -25,8 +25,10 @@ canonical form is denied rather than tidied. The README's "Known limits" lists f
 ## The query exception
 
 The query is dropped, so requests that differ only in the query share a target. This is the one merge the
-canonicalizer makes on purpose. An API that picks its action from the query string gets one target for every action
-behind that path, so this library cannot limit such an API per action today.
+canonicalizer makes on purpose. Its bytes are read first, because a raw CR or LF could inject a header if a host
+forwards the request target. Its structure and percent-encoding are not parsed. An API that picks its action from
+the query string gets one target for every action behind that path, so this library cannot limit such an API per
+action today.
 
 ## Changing a rule
 
