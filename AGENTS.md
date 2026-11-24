@@ -15,7 +15,9 @@ Run once, right after cloning:
 pre-commit install --hook-type pre-commit --hook-type pre-push
 ```
 
-Without that step this clone has no checks at all, and nothing will warn you.
+Without that step this clone runs no checks before a push, and nothing will warn you.
+GitHub runs the same commands on every pull request (`.github/workflows/ci.yml`), so
+keep that file and the hooks in step.
 
 ## No build scripts, no proc-macros
 
