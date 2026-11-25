@@ -129,3 +129,18 @@ check` (the pre-push hook runs this first, before the slower checks, since it do
 compile anything and is the check most likely to reject a change outright). `--locked`
 must come *before* `check` (`cargo deny --locked check`, not `cargo deny check
 --locked`) -- `cargo-deny`'s top-level flags aren't accepted after the subcommand.
+
+## Merging
+
+Open a pull request, and merge it once the `Verify` check passes on its head commit.
+Merge by pushing that same commit to `main` as a fast-forward:
+
+```sh
+git fetch origin
+git push origin <branch>:main
+```
+
+GitHub then marks the pull request merged. `main` accepts only a commit that already
+passed `Verify` on top of the current `main`, so rebase the branch and let the check
+run again if `main` moved. Don't use the merge button: it writes a new commit that
+names the person who clicked it, using their profile name.
