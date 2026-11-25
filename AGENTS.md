@@ -132,15 +132,6 @@ must come *before* `check` (`cargo deny --locked check`, not `cargo deny check
 
 ## Merging
 
-Open a pull request, and merge it once the `Verify` check passes on its head commit.
-Merge by pushing that same commit to `main` as a fast-forward:
-
-```sh
-git fetch origin
-git push origin <branch>:main
-```
-
-GitHub then marks the pull request merged. `main` accepts only a commit that already
-passed `Verify` on top of the current `main`, so rebase the branch and let the check
-run again if `main` moved. Don't use the merge button: it writes a new commit that
-names the person who clicked it, using their profile name.
+Open a pull request, and squash-merge it once the `Verify` check passes. `main` accepts
+changes only through a pull request. The squash commit takes the pull request's title
+and body, so write them in the commit format from the backlog file.
