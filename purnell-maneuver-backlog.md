@@ -75,6 +75,13 @@ This repo has no tagged releases. To point at an exact state, link to its commit
 | B-13 | Finish the Kani proofs | P2 | M | Some proofs do not finish | Stub `ascii_to_string` | Each proof verifies or lists why it cannot |
 | B-17 | Make `try --explain` check the token first | P2 | S | `try --explain` and plain `try` can report different denials for the same bad token | Run the token check before the explanation | `try --explain` reports the same denial as plain `try` for every bad token in the flow vectors |
 | B-18 | Add a Rust usage example to the docs | P2 | S | The docs have no short Rust example and no dependency line | Write a short learn, seal and check example, and the dependency line | The example compiles and its output matches the docs |
+
+## 2. Research
+
+Ideas to try. Each one ends in tests or a written result, not a feature.
+
+| # | Item | P | Effort | Description | Next step | Done when |
+|---|---|---|---|---|---|---|
 | B-19 | Search for a way past the check | P2 | M | The tests and fuzzing try inputs without learning from a near-miss | Run agents that start from a token listing one path, share what they find on one board, and try to get any other request allowed | Each way past the check becomes a failing test and a fix, or the run records every spelling it tried |
 
 ## What I'd do next

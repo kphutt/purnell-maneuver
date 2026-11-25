@@ -6,7 +6,7 @@ Closed work, newest first. Open work is in [purnell-maneuver-backlog.md](purnell
 
 | # | Closed | Item | What wrapped up | Commits |
 |---|---|---|---|---|
-| <a id="b-14"></a>B-14 | 2026-11-24 | Run the checks on GitHub | A workflow runs the commit and push checks on every pull request, every push to `main` and once a week, and `main` requires it to pass | The commit that adds this row |
+| <a id="b-14"></a>B-14 | 2026-11-24 | Run the checks on GitHub | A workflow runs the commit and push checks on every pull request, every push to `main` and once a week, and `main` requires it to pass | [0be24c9](https://github.com/kphutt/purnell-maneuver/commit/0be24c93d12ce782fa47bec3e242814f4e1196a6) |
 | <a id="b-16"></a>B-16 | 2026-11-23 | Limits and wording | Add the missing deployment conditions and known limits, and narrow four claims that said more than was checked | [08bd11d](https://github.com/kphutt/purnell-maneuver/commit/08bd11dfd378c6fc3620f0f06c51dc9713c9d849) |
 | <a id="b-15"></a>B-15 | 2026-11-23 | Query byte check | Deny a raw control, space, DEL or non-ASCII byte in a query, so a raw CRLF there cannot pass the check | [bcbad6a](https://github.com/kphutt/purnell-maneuver/commit/bcbad6a1f0133db964265e8ff20f9493f0a5d024) |
 | <a id="b-7"></a>B-7 | 2026-11-23 | License and project docs | The Apache-2.0 license, README, contributor guide, backlog, archive and notes | [350e329](https://github.com/kphutt/purnell-maneuver/commit/350e329f9b76861234b3af56d705b085ca4f1bac) [52e9868](https://github.com/kphutt/purnell-maneuver/commit/52e9868a876101142a997641daedf03f75f4c42a) |
