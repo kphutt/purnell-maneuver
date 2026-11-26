@@ -50,8 +50,9 @@ for example: GET https example.com /orders?x=1
               rejects it.
 
 --run ID seals a v2 token naming the run it was sealed for, instead of a v1 token
-that names none. The id is an opaque label the caller supplies. `check` prints the id it read but never uses it -- the id is not among the
-bytes `gate::check` is handed at all.
+that names none. The id is an opaque label the caller supplies. `check --explain` prints
+the id it read but never uses it -- the id is not among the bytes `gate::check` is
+handed at all.
 
 --explain prints each step instead of just the final answer: the raw request facts
 as given, the canonical target (or which rule denied it and why), and for `seal` the
