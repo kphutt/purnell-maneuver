@@ -75,6 +75,8 @@ This repo has no tagged releases. To point at an exact state, link to its commit
 | B-13 | Finish the Kani proofs | P2 | M | Some proofs do not finish | Stub `ascii_to_string` | Each proof verifies or lists why it cannot |
 | B-17 | Make `try --explain` check the token first | P2 | S | `try --explain` and plain `try` can report different denials for the same bad token | Run the token check before the explanation | `try --explain` reports the same denial as plain `try` for every bad token in the flow vectors |
 | B-18 | Add a Rust usage example to the docs | P2 | S | The docs have no short Rust example and no dependency line | Write a short learn, seal and check example, and the dependency line | The example compiles and its output matches the docs |
+| B-20 | Add MCP requests to the `try` example | P2 | S | MCP is a headline feature, but the example always sends a request with no MCP headers | Add options for the `Mcp-Method` and `Mcp-Name` values | The README shows one allowed and one denied MCP check, and its output matches the example |
+| B-21 | Make the "what it does" page short and easy to follow | P1 | M | `docs/what-it-does.md` is about 30 KB, dense with test names, and uses terms before it explains them | Rewrite it as plain lists a newcomer can read in a few minutes, with the test evidence moved below or to its own page | A first-time reader can say what the library does and does not do after one read, and `what_it_does.rs` still passes |
 
 ## 2. Research
 

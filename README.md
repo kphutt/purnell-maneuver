@@ -28,6 +28,8 @@ Denied: NotListed
 ```
 
 The token lists `/orders`, so that request is allowed. It does not list `/admin`, so that one is denied.
+Run it with `--help` to see the other commands and options. The example does not send MCP headers, so
+it only shows HTTP checks.
 
 ## How it works
 
@@ -35,7 +37,7 @@ The token lists `/orders`, so that request is allowed. It does not list `/admin`
 observe a request -> learn a set of destinations -> seal it into a token -> check later requests against it
 ```
 
-Each token entry is called a caveat. An HTTP caveat matches the method, scheme, host, port and path, and a token leaves out the default port for its scheme. Two MCP tools can
+Each token entry is called a caveat. An HTTP caveat matches the method, scheme, host, port and path. The default port for the scheme is never written out, in a token or a request, so `example.com:443` is denied. Two MCP tools can
 share one HTTP endpoint, so an MCP caveat also matches the `Mcp-Method` and `Mcp-Name` header values.
 
 Learning and checking share one set of rules for reading a request. Those rules deny a non-canonical spelling instead of
@@ -79,7 +81,14 @@ These apply to all three crates:
 
 ## Build and test
 
-You need `cargo-deny` and the Rust version pinned in the toolchain file.
+Install Rust with [rustup](https://rustup.rs), then run `rustup toolchain install` in the repo. It installs
+the version pinned in `rust-toolchain.toml`. Then install `cargo-deny`:
+
+```sh
+cargo install --locked cargo-deny --version 0.20.2
+```
+
+The checks:
 
 ```sh
 cargo fmt --check
