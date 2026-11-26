@@ -45,10 +45,11 @@ token that the gate accepts.
     ([changelog](https://github.com/brycx/pasetors/blob/master/CHANGELOG.md),
     [issue 48](https://github.com/brycx/pasetors/issues/48)). Google's
     [OpenSK](https://github.com/google/OpenSK/blob/develop/libraries/opensk/Cargo.toml) uses it as
-    an optional software backend.
+    an optional software backend, at version 1.x (`version = "1"`).
   - **Accepted risks.** The crate has one owner on crates.io. We found no public audit of it.
-  - **What covers them.** The committed `Cargo.lock` with `--locked`, Dependabot's 7-day cooldown,
-    reading the diff of each version bump (one crate, so the diff is small), and our own test
+  - **What covers them.** The committed `Cargo.lock` with `--locked`, Dependabot's 7-day cooldown
+    for Rust crates (set in `.github/dependabot.yml`), reading the diff of each version bump (one
+    crate with no dependencies, so each version bump is one diff to read), and our own test
     vectors (SIG-15).
   - **What would make us switch.** We would move to `ed25519-dalek` and add a reviewed
     build-script exception to `deny.toml` if any of these happens: a Wycheproof or speccheck vector
@@ -84,9 +85,15 @@ Each requirement has an ID, so tests and the design can point at it.
   choice in the token, if there is one, only picks among keys the caller supplied, and the
   signature covers it. A key of the wrong type or length is denied before any signature work. A
   public key must be a properly made key of prime order, and the caller supplies only such keys. A
-  small-order or mixed-order key is outside the contract. The reason: the verify in
-  `ed25519-compact` is cofactored, so speccheck vectors 4 and 5 (mixed-order keys) verify, and
-  only the trusted sealing side, which can sign anyway, could supply such a key.
+  small-order or mixed-order key is outside the contract. The reason: speccheck vectors 3, 4 and 5
+  all use mixed-order keys, and all three verify with `ed25519-compact`. Vectors 4 and 5 verify
+  only because its check is cofactored. Only the trusted sealing side, which can sign anyway,
+  could supply such a key.
+
+  Terms. A key of prime order is a normal key, the kind honest key generation makes. Small-order
+  and mixed-order keys are malformed points that honest key generation never makes. A cofactored
+  check multiplies both sides of the signature equation by 8, so it also accepts some signatures
+  made under a mixed-order key.
 - **SIG-8. One valid spelling per signed token.** The scheme must reject a second spelling of a
   valid signature. The signature is written in a fixed-length encoding that is read strictly. It
   uses printable ASCII, contains no `;` or space, and fits in an HTTP header. Each sealed set still
@@ -119,7 +126,10 @@ Each requirement has an ID, so tests and the design can point at it.
 - **SIG-15. Shared test vectors.** Signed tokens get vectors in `testdata/vectors/`, made with test
   keys that are marked as test-only. They include bad cases, such as an edited signature and a
   second spelling of one. The vectors include the Wycheproof Ed25519 set. A binding in another
-  language can then check that it gives the same answers.
+  language can then check that it gives the same answers. The 29 vectors Wycheproof marks
+  "acceptable" (small-order and mixed-order keys) are recorded with the result this library
+  gives: the 8 small-order keys are rejected and the 21 mixed-order keys verify. The expected
+  answer is this library's result.
 
 ### What changes with it
 
@@ -141,7 +151,7 @@ Each requirement has an ID, so tests and the design can point at it.
 
 1. **Q-1. Which signature library?** Answered by D-5. The evidence follows.
 
-   The nine tests a library had to pass, and the SIG items they come from:
+   The nine tests a library had to pass, and where each comes from:
 
    1. No build script or proc-macro in the dependency graph (SIG-11).
    2. `cargo deny --locked check` passes (SIG-11).
@@ -151,17 +161,19 @@ Each requirement has an ID, so tests and the design can point at it.
    5. Deterministic, with no randomness crate (SIG-10).
    6. A key of the wrong length gives a typed error (SIG-7).
    7. Signs and verifies raw bytes, so the label of SIG-9 can lead the signed bytes (SIG-9).
-   8. A supply chain we can trust (the README's design rules and `deny.toml`).
-   9. Actively maintained (D-5).
+   8. A supply chain we can trust (no SIG item; from the README's design rules and `deny.toml`).
+   9. Actively maintained (no SIG item; a basic bar for any dependency).
 
-   Results, measured on 2026-11-26 with `default-features = false`:
+   Results, measured on 2026-11-26 with `default-features = false`, plus the features each
+   library needs to build: `alloc` and `zeroize` for dalek, `alloc` for zebra and `datalog-macro`
+   for biscuit-auth:
 
    | Library | Passed | Why the rest failed |
    |---|---|---|
    | `ed25519-compact` 2.6.1 | 9 of 9 | |
    | `ed25519-dalek` 3.0.0 | 7 of 9 | Build script in `curve25519-dalek`, plus proc-macro and build-script crates on x86_64, so tests 1 and 2 fail. |
    | `ed25519-zebra` 5.0.0 | 5 of 9 | The same build scripts, so tests 1 and 2 fail. Test 4 fails because it follows ZIP215, which accepts non-canonical R and A. Test 5 fails because `rand_core` is a required dependency. |
-   | `biscuit-auth` 6.0.0 | 1 of 9 | 14 build scripts and 7 proc-macros in its graph. It needs `std`, an open advisory is in its graph, its last release was 2025-07-16, and its public API cannot verify a bare signature. |
+   | `biscuit-auth` 6.0.0 | 2 of 9 | It fails tests 1, 2, 3, 5, 7 and 8, and passes 6 and 9. Test 4 could not be run, because its public API cannot verify a bare signature. Reasons: 14 build scripts and 7 proc-macros in its graph (with `datalog-macro` on). It needs `std`. `rand`, `rand_core` and `getrandom` are required. An open advisory is in its graph. |
 
    `ed25519-dalek` is used by [libsignal](https://github.com/signalapp/libsignal/blob/main/Cargo.toml),
    [Arti](https://gitlab.torproject.org/tpo/core/arti/-/blob/main/crates/tor-llcrypto/Cargo.toml),
@@ -169,7 +181,7 @@ Each requirement has an ID, so tests and the design can point at it.
    [ssh-key](https://github.com/RustCrypto/SSH/blob/master/ssh-key/Cargo.toml). We would take it
    only with a reviewed build-script exception.
 
-   Wycheproof: all 210 vectors in `ed25519_test.json` (the C2SP/wycheproof file, at commit
+   Wycheproof: all 210 vectors in `testvectors_v1/ed25519_test.json` (C2SP/wycheproof, at commit
    `65ca494`) were run through `PublicKey::from_slice` and `verify`. All 117 valid vectors verify
    and all 64 invalid ones are rejected. The 29 marked acceptable are all small-order or
    mixed-order public keys: 8 small-order keys are rejected and 21 mixed-order keys verify, which

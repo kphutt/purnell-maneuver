@@ -4,13 +4,13 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-    # New dependency versions wait 3 days before Dependabot proposes them, so a
+    # New dependency versions wait 7 days before Dependabot proposes them, so a
     # short-burst supply-chain compromise (a malicious version published and pulled
     # within days) has a window to be caught and yanked before this repo adopts it.
     # Security updates bypass cooldown by design (GitHub always proposes those
     # immediately, regardless of this setting).
     cooldown:
-      default-days: 3
+      default-days: 7
     groups:
       dev-dependencies:
         dependency-type: "development"
