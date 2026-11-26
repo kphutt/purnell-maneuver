@@ -15,7 +15,7 @@ behind it is in [purnell-maneuver-notes.md](purnell-maneuver-notes.md).
 
 **Goal:** a small, well-tested library that limits which HTTP and MCP destinations an AI agent or other automated client can reach.
 
-**Next:** sign tokens, so a token proves who wrote it (B-8).
+**Next:** finish signing tokens, so a token proves who wrote it (B-8). The next step is to merge pull request 8, which chooses the library.
 
 ## How this file works
 
@@ -61,13 +61,12 @@ This repo has no tagged releases. To point at an exact state, link to its commit
 
 | # | Item | Effort | Description | Next step |
 |---|---|---|---|---|
-| | Nothing in progress | | | |
+| B-8 | Sign tokens | L | A token proves nothing about who wrote it today. The library is chosen in [pull request 8](https://github.com/kphutt/purnell-maneuver/pull/8): `ed25519-compact`, decision D-5 in `docs/design/token-signing.md`. Left after that: answer Q-2 (where the crypto dependency goes) and Q-3 (how a gate picks a key), write the design section, then build it: verification in `token::present`, signing on the sealing side, the new `Denial` cases, the vectors (including Wycheproof), and retiring `v1` and `v2`. The known-gap test flips to a denial. | Merge pull request 8 |
 
 ## 1. Ready to build
 
 | # | Item | P | Effort | Description | Next step | Done when |
 |---|---|---|---|---|---|---|
-| B-8 | Sign tokens | P1 | L | A token proves nothing about who wrote it today | Choose the signature scheme | The test that pins the unsigned-token gap flips to a refusal |
 | B-9 | A request reader | P1 | M | Turn one real platform's request into `RequestFacts` without tidying it | Pick the first platform | The reader denies when two copies of a fact disagree |
 | B-10 | Add a check service | P2 | M | Add a service that runs the gate behind an external authorization check | Design it as its own crate | It builds and passes the workspace checks |
 | B-11 | Language bindings | P2 | L | The library is Rust only | Start with Python | One binding passes the shared vectors |
@@ -76,7 +75,8 @@ This repo has no tagged releases. To point at an exact state, link to its commit
 | B-17 | Make `try --explain` check the token first | P2 | S | `try --explain` and plain `try` can report different denials for the same bad token | Run the token check before the explanation | `try --explain` reports the same denial as plain `try` for every bad token in the flow vectors |
 | B-18 | Add a Rust usage example to the docs | P2 | S | The docs have no short Rust example and no dependency line | Write a short learn, seal and check example, and the dependency line | The example compiles and its output matches the docs |
 | B-20 | Add MCP requests to the `try` example | P2 | S | MCP is a headline feature, but the example always sends a request with no MCP headers | Add options for the `Mcp-Method` and `Mcp-Name` values | The README shows one allowed and one denied MCP check, and its output matches the example |
-| B-21 | Make the "what it does" page short and easy to follow | P1 | M | `docs/what-it-does.md` is about 30 KB, dense with test names, and uses terms before it explains them | Rewrite it as plain lists a newcomer can read in a few minutes, with the test evidence moved below or to its own page | A first-time reader can say what the library does and does not do after one read, and `what_it_does.rs` still passes |
+| B-21 | Make the "what it does" page short and easy to follow | P1 | M | `docs/what-it-does.md` is about 25 KB, dense with test names, and uses terms before it explains them | Rewrite it as plain lists a newcomer can read in a few minutes, with the test evidence moved below or to its own page | A first-time reader can say what the library does and does not do after one read, and `what_it_does.rs` still passes |
+| B-22 | Move to Rust 1.100 and turn on Cargo's wait on new versions | P2 | S | Cargo's built-in wait on new crate versions (`registry.global-min-publish-age`) is stable only from Rust 1.100.0, released 2026-11-12. The repo pins 1.98.1. `cargo install` ignores the setting | Raise `channel` in `rust-toolchain.toml` to 1.100 or later | The toolchain is 1.100 or later, a committed cargo config sets 7 days, and the hooks and CI pass |
 
 ## 2. Research
 
@@ -88,6 +88,6 @@ Ideas to try. Each one ends in tests or a written result, not a feature.
 
 ## What I'd do next
 
-1. Sign tokens (B-8).
+1. Finish signing tokens (B-8): merge pull request 8, answer Q-2 and Q-3, write the design section, then build it.
 2. Add the first request reader (B-9).
 3. Add a check service (B-10).
