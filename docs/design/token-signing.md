@@ -160,8 +160,8 @@ Each requirement has an ID, so tests and the design can point at it.
    |---|---|---|
    | `ed25519-compact` 2.6.1 | 9 of 9 | |
    | `ed25519-dalek` 3.0.0 | 7 of 9 | Build script in `curve25519-dalek`, plus proc-macro and build-script crates on x86_64, so tests 1 and 2 fail. |
-   | `ed25519-zebra` 5.0.0 | 5 of 9 | The same build scripts. It follows ZIP215, which accepts non-canonical R and A, so tests 4 and 5 fail too. |
-   | `biscuit-auth` 6.0.0 | 1 of 9 | 14 build scripts and 7 proc-macros in its graph. |
+   | `ed25519-zebra` 5.0.0 | 5 of 9 | The same build scripts, so tests 1 and 2 fail. Test 4 fails because it follows ZIP215, which accepts non-canonical R and A. Test 5 fails because `rand_core` is a required dependency. |
+   | `biscuit-auth` 6.0.0 | 1 of 9 | 14 build scripts and 7 proc-macros in its graph. It needs `std`, an open advisory is in its graph, its last release was 2025-07-16, and its public API cannot verify a bare signature. |
 
    `ed25519-dalek` is used by [libsignal](https://github.com/signalapp/libsignal/blob/main/Cargo.toml),
    [Arti](https://gitlab.torproject.org/tpo/core/arti/-/blob/main/crates/tor-llcrypto/Cargo.toml),
