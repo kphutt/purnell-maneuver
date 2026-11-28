@@ -15,7 +15,7 @@ behind it is in [purnell-maneuver-notes.md](purnell-maneuver-notes.md).
 
 **Goal:** a small, well-tested library that limits which HTTP and MCP destinations an AI agent or other automated client can reach.
 
-**Next:** finish signing tokens, so a token proves who wrote it (B-8).
+**Next:** set up the automatic pull request reviewer for this repo (B-23). It blocks merging the open signing pull requests, then signing tokens continues (B-8).
 
 ## How this file works
 
@@ -59,9 +59,10 @@ This repo has no tagged releases. To point at an exact state, link to its commit
 
 ## In progress
 
-| # | Item | Effort | Description | Next step |
-|---|---|---|---|---|
-| B-8 | Sign tokens | L | A token proves nothing about who wrote it today | Merge [pull request 8](https://github.com/kphutt/purnell-maneuver/pull/8), which picks `ed25519-compact` (D-5 in `docs/design/token-signing.md`). Then answer Q-2 (where the crypto dependency goes) and Q-3 (how a gate picks a key), write the design section, and build it: verification in `token::present`, signing on the sealing side, the new `Denial` cases, the vectors (including Wycheproof), and retiring `v1` and `v2`. The known-gap test flips to a denial. |
+| # | Item | P | Effort | Description | Next step | Done when |
+|---|---|---|---|---|---|---|
+| B-23 | Set up the automatic pull request reviewer | P0 | M | This repo has no automatic review of pull requests yet: no review routine and no GitHub trigger that starts one. Until both exist, the safe-merge command will not merge a pull request here. This blocks merging [pull request 8](https://github.com/kphutt/purnell-maneuver/pull/8) and [pull request 9](https://github.com/kphutt/purnell-maneuver/pull/9) | Create the review routine and its trigger for newly opened pull requests. Prove it with a throwaway pull request: the run must show as started by the trigger, not by hand. Then record the routine in the reviewer's settings kept outside this repo, and mark this repo as having a routine there | A pull request opened on purnell-maneuver gets an auto-posted Litmus review |
+| B-8 | Sign tokens | P0 | L | A token proves nothing about who wrote it today | Blocked by B-23. Then merge [pull request 8](https://github.com/kphutt/purnell-maneuver/pull/8), which picks `ed25519-compact` (D-5 in `docs/design/token-signing.md`). Then answer Q-2 (where the crypto dependency goes) and Q-3 (how a gate picks a key), write the design section, and build it: verification in `token::present`, signing on the sealing side, the new `Denial` cases, the vectors (including Wycheproof), and retiring `v1` and `v2` | The known-gap test (a hand-written canonical token is allowed) flips to a denial, and the vectors include the Wycheproof Ed25519 set |
 
 ## 1. Ready to build
 
@@ -88,6 +89,7 @@ Ideas to try. Each one ends in tests or a written result, not a feature.
 
 ## What I'd do next
 
-1. Finish signing tokens (B-8).
-2. Add the first request reader (B-9).
-3. Add a check service (B-10).
+1. Set up the automatic pull request reviewer (B-23).
+2. Finish signing tokens (B-8).
+3. Add the first request reader (B-9).
+4. Add a check service (B-10).
